@@ -17,10 +17,10 @@ public class AutonomousRedFar extends AutonomousBase {
     static final boolean DRIVE_X = false;   // Drive right/left (not DRIVE_Y)
 
     double pos_y=robotGlobalYCoordinatePosition, pos_x=robotGlobalXCoordinatePosition, pos_angle=robotOrientationRadians;  // Allows us to specify movement ABSOLUTELY
-    public double shooterPower = 0.50;
+    public double shooterPower = 0.575;
     public int flywheelFarPosAutoDelay = 400;
     public double startingFlapperPos = 0.5;
-    public double startingTurretPos = 0.5;
+    public double startingTurretPos = 0.55;
 
     @Override
     public void runOpMode() throws InterruptedException {
