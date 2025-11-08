@@ -2,12 +2,17 @@
  */
 package org.firstinspires.ftc.teamcode;
 
+import com.qualcomm.hardware.limelightvision.LLResult;
+import com.qualcomm.hardware.limelightvision.LLResultTypes;
+import com.qualcomm.hardware.limelightvision.Limelight3A;
 import com.qualcomm.robotcore.eventloop.opmode.Autonomous;
 import com.qualcomm.robotcore.util.ElapsedTime;
 
+import java.util.List;
+
 /**
  */
-@Autonomous(name="Red Far", group="7592", preselectTeleOp = "Teleop")
+@Autonomous(name="Red Far", group="7592", preselectTeleOp = "Teleop-Red")
 //@Disabled
 public class AutonomousRedFar extends AutonomousBase {
 
@@ -17,37 +22,51 @@ public class AutonomousRedFar extends AutonomousBase {
     static final boolean DRIVE_X = false;   // Drive right/left (not DRIVE_Y)
 
     double pos_y=robotGlobalYCoordinatePosition, pos_x=robotGlobalXCoordinatePosition, pos_angle=robotOrientationRadians;  // Allows us to specify movement ABSOLUTELY
-    public double shooterPower = 0.575;
-    public int flywheelFarPosAutoDelay = 400;
-    public double startingFlapperPos = 0.5;
-    public double startingTurretPos = 0.55;
+
+    private Limelight3A limelight;
+    private int         obeliskID=21; // if we can't see it, assume GPP (green purple purple)
 
     @Override
     public void runOpMode() throws InterruptedException {
 
+        // Initialize robot hardware (autonomous mode)
         telemetry.addData("State", "Initializing (please wait)");
         telemetry.update();
-
-        // Initialize robot hardware (autonomous mode)
         robot.init(hardwareMap,true);
+        redAlliance  = true;
 
-        // Start Robot Facing Horizontally to the Field
-        robotOrientationRadians = 0.0;
+        // NOTE: Control Hub is assigned eth0 address 172.29.0.1 by limelight DHCP server
+        limelight = hardwareMap.get(Limelight3A.class, "limelight");
+        limelight.pipelineSwitch(1);
+        limelight.start();  // Start polling for data (skipping this has getLatestResult() return null results)
 
+        // Wait for the game to start (driver presses PLAY).  While waiting, poll for options
         while (!isStarted()) {
-            robot.shooterServo.setPosition(startingFlapperPos);
-            robot.turretServo1.setPosition(startingTurretPos);
             // Do we need to change any of the other autonomous options?
             processAutonomousInitMenu(false);  // not auto5 start position
+            LLResult result = limelight.getLatestResult();
+            if (result.isValid()) {
+                // Access fiducial results
+                List<LLResultTypes.FiducialResult> fiducialResults = result.getFiducialResults();
+                for (LLResultTypes.FiducialResult fr : fiducialResults) {
+                    int limelightID = fr.getFiducialId();
+                    // Note: common OBELISK april tags for both RED & BLUE alliance
+                    //  21 = GPP (green purple purple)
+                    //  22 = PGP (purple green purple)
+                    //  23 = PPG (purple purple green)
+                    if( (limelightID >= 21) && (limelightID <= 23) ) {
+                        telemetry.addData("Obelisk", "ID: %d", limelightID);
+                        obeliskID = limelightID;
+                    }
+                } // fiducialResults
+            } // isValid
             // Pause briefly before looping
             idle();
         } // !isStarted
 
-        // Wait for the game to start (driver presses PLAY).  While waiting, poll for options
-        redAlliance  = true;
-        scoringZones = 0;
-
+        limelight.stop();
         resetGlobalCoordinatePosition();
+        scoringZones = 0;
 
         // Start the autonomous timer so we know how much time is remaining when cycling samples
         autonomousTimer.reset();
@@ -55,8 +74,7 @@ public class AutonomousRedFar extends AutonomousBase {
         //---------------------------------------------------------------------------------
         // AUTONOMOUS ROUTINE:  The following method is our main autonomous.
         // Assume turret position, flapper, and flywheel motor power is in position
-        // Time delay for flywheel to specific motor speed
-        mainAutonomous();
+        mainAutonomous( obeliskID );
         //---------------------------------------------------------------------------------
 
         telemetry.addData("Program", "Complete");
@@ -98,7 +116,7 @@ public class AutonomousRedFar extends AutonomousBase {
     /*   4 Drive back to launch zone                                                              */
     /*   5 Score collected balls                                                                  */
     /*--------------------------------------------------------------------------------------------*/
-    private void mainAutonomous() {
+    private void mainAutonomous( int obeliskID ) {
 
         // Do we start with an initial delay?
         if( startDelaySec > 0 ) {
@@ -106,47 +124,63 @@ public class AutonomousRedFar extends AutonomousBase {
         }
 
         // Score Preload Balls
-        scorePreloadBalls();
-//        driveToFirstTickMark();
-//        scorePreloadBalls();
+        scorePreloadBalls( obeliskID );
+//      driveToFirstTickMark();
+//      scorePreloadBalls();
+
+        // Drive away from the score line for the MOVEMENT points
+        driveToPosition(-32.0, 0.0, 0.0, DRIVE_SPEED_30, TURN_SPEED_30, DRIVE_TO);
 
         // ensure motors are turned off even if we run out of time
         robot.driveTrainMotorsZero();
     } // mainAutonomous
 
     /*--------------------------------------------------------------------------------------------*/
-    private void scorePreloadBalls() {
+    private void scorePreloadBalls( int obeliskID ) {
         // Turn on flywheel motor
         if( opModeIsActive() ) {
             telemetry.addData("Motion", "Flywheel Ramp Up");
             telemetry.update();
+            // Start to ramp up the shooter
+            double shooterPower = 0.55;
             robot.shooterMotor1.setPower( shooterPower );
             robot.shooterMotor2.setPower( shooterPower );
-            sleep(flywheelFarPosAutoDelay); // Wait for flywheels to ramp up to speed
-            for(int i=0; i<3; i++){
+            // Start with robot facing the goal (not the obelisk)
+            driveToPosition(-12.0, 0.0, 0.0, DRIVE_SPEED_10, TURN_SPEED_15, DRIVE_TO);
+            // Drive forward and rotate 180deg so we can shoot
+//          driveToPosition(11.0, 0.0, 0.0, DRIVE_SPEED_30, TURN_SPEED_30, DRIVE_THRU);
+            // Point the turret toward the goal
+            robot.shooterServo.setPosition(0.5);  // NOT ACTUALLY USED
+            robot.turretServo1.setPosition(0.55); // rotated right toward RED goal
+//          driveToPosition(28.5, 0.0, -179.0, DRIVE_SPEED_30, TURN_SPEED_15, DRIVE_TO);
+            // Turn on the collector to help retain balls during spindexing
+            robot.intakeMotor.setPower(0.90);
+            sleep(4000 ); // Wait a bit longer for flywheels to reach speed
+            // spindexer is loaded in P3=PURPLE P2=PURPLE P1=GREEN order
+            //  21 = GPP (green purple purple)
+            //  22 = PGP (purple green purple)
+            //  23 = PPG (purple purple green)
+            for(int i=0; i<3; i++) {
                 launchBall();
+                // rotate to the next position
+                robot.spinServoSetPosition( HardwareSwyftBot.spindexerStateEnum.SPIN_DECREMENT );
+                if( !opModeIsActive() ) break;
+                sleep(2000 );
             }
         } // opModeIsActive
-
     } // scoreSamplePreload
 
     private void launchBall(){
         robot.startInjectionStateMachine();
         do {
-            if( !opModeIsActive() ) break;
-
             sleep(50);
-
+            if( !opModeIsActive() ) break;
             performEveryLoop();
         } while (robot.liftServoBusyU || robot.liftServoBusyD);
-
     }
-
 
     private void driveToFirstTickMark() {
 //        driveToPosition()
     }
 
-
-
-} /* AutonomousLeft4 */
+} /* AutonomousRedFar */

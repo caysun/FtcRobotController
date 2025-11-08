@@ -79,6 +79,7 @@ public class HardwareSwyftBot
 
     protected DcMotorEx shooterMotor1   = null;  // upper 
     protected DcMotorEx shooterMotor2   = null;  // lower
+    public    double    shooterMotorVel = 0.0; // encoder counts per second
 
     public final static double SHOOTER_MOTOR_FAR  = 0.55;
     public final static double SHOOTER_MOTOR_MID  = 0.45;
@@ -147,7 +148,7 @@ public class HardwareSwyftBot
     }
 
     /* Initialize standard Hardware interfaces */
-    public void init(HardwareMap ahwMap, boolean isAutonomous ) {
+    public void init(HardwareMap ahwMap, boolean isAutonomous ) throws InterruptedException {
         // Save reference to Hardware map
         hwMap = ahwMap;
 
@@ -162,9 +163,9 @@ public class HardwareSwyftBot
         }
 
         // Locate the odometry controller in our hardware settings
-        odom = hwMap.get(GoBildaPinpointDriver.class,"odom");      // Expansion Hub I2C port 1
-//      odom.setOffsets(-144.00, +88.00, DistanceUnit.MM); // odometry pod x,y locations relative center of robot
-        odom.setOffsets(0.00, 0.00, DistanceUnit.MM);      // odometry pod x,y locations relative center of robot  2 2
+        odom = hwMap.get(GoBildaPinpointDriver.class,"odom");    // Expansion Hub I2C port 1
+        odom.setOffsets(-171.80, +78.06, DistanceUnit.MM);   // odometry pod x,y locations relative center of robot
+//      odom.setOffsets(0.00, 0.00, DistanceUnit.MM);      // odometry pod x,y locations relative center of robot  2 2
         odom.setEncoderResolution( GoBildaPinpointDriver.GoBildaOdometryPods.goBILDA_4_BAR_POD ); // 4bar pods
         odom.setEncoderDirections(GoBildaPinpointDriver.EncoderDirection.REVERSED, GoBildaPinpointDriver.EncoderDirection.FORWARD);
         if( isAutonomous ) {
@@ -267,14 +268,14 @@ public class HardwareSwyftBot
     } /* init */
 
     /*--------------------------------------------------------------------------------------------*/
-    public void resetEncoders()
-    {
+    public void resetEncoders() throws InterruptedException {
         // Initialize the injector servo first! (so it's out of the way for spindexer rotation)
         liftServo.setPosition(LIFT_SERVO_INIT);
         turretServo1.setPosition(TURRET_SERVO_INIT);
 //      turretServo2.setPosition(TURRET_SERVO_INIT);
         shooterServo.setPosition(SHOOTER_SERVO_INIT);
-        spinServoSetPosition(spindexerStateEnum.SPIN_P2);
+        sleep(250);
+        spinServoSetPosition(spindexerStateEnum.SPIN_P3); // allows autonomous progression 3-2-1
     } // resetEncoders
 
     /*--------------------------------------------------------------------------------------------*/
@@ -310,11 +311,11 @@ public class HardwareSwyftBot
         // Get a fresh set of values for this cycle
         //   getCurrentPosition() / getTargetPosition() / getTargetPositionTolerance()
         //   getPower() / getVelocity() / getCurrent()
-
-
+        shooterMotorVel = shooterMotor1.getVelocity();
         // NOTE: motor mA data is NOT part of the bulk-read, so increases cycle time!
-//      viperMotorAmps      = viperMotor.getCurrent(MILLIAMPS);
+//      shooterMotorAmps = shooterMotor1.getCurrent(MILLIAMPS);
     } // readBulkData
+
     /*--------------------------------------------------------------------------------------------*/
     public void driveTrainMotors( double frontLeft, double frontRight, double rearLeft, double rearRight )
     {
