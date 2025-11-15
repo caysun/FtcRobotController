@@ -1,5 +1,8 @@
 package org.firstinspires.ftc.teamcode;
 
+import static org.firstinspires.ftc.teamcode.HardwareSwyftBot.SpindexerState.SPIN_P1;
+import static org.firstinspires.ftc.teamcode.HardwareSwyftBot.SpindexerState.SPIN_P2;
+import static org.firstinspires.ftc.teamcode.HardwareSwyftBot.SpindexerState.SPIN_P3;
 import static java.lang.Math.abs;
 import static java.lang.Math.toRadians;
 
@@ -8,7 +11,6 @@ import android.os.SystemClock;
 
 import com.qualcomm.robotcore.eventloop.opmode.LinearOpMode;
 import com.qualcomm.robotcore.hardware.DcMotor;
-import com.qualcomm.robotcore.hardware.DcMotorEx;
 import com.qualcomm.robotcore.util.ElapsedTime;
 import com.qualcomm.robotcore.util.Range;
 
@@ -76,31 +78,16 @@ public abstract class AutonomousBase extends LinearOpMode {
     double autoYpos                             = 0.0;   // (useful when a given value remains UNCHANGED from one
     double autoAngle                            = 0.0;   // movement to the next, or INCREMENTAL change from current location).
 
-    double beforeXpos                           = 0.0;   // Keeps track of our BEFORE alignToPole() odometry location
-    double beforeYpos                           = 0.0;
-    double beforeAngle                          = 0.0;
-
-    double afterXpos                            = 0.0;   // Keeps track of our AFTER alignToPole() odometry location
-    double afterYpos                            = 0.0;
-    double afterAngle                           = 0.0;
-
     String      storageDir;
     boolean     redAlliance      = true;  // Is alliance BLUE (true) or RED (false)?
     boolean     forceAlliance    = false; // Override vision pipeline? (toggled during init phase of autonomous)
     int         initMenuSelected = 1;    // start on the first entry
     int         initMenuMax      = 6;    // we have 6 total entries
     int         startDelaySec    = 0;     // 1: wait [seconds] at startup -- applies to both left/rigth starting positions
-    int         parkDelaySec     = 0;     // 2: wait [seconds] before parking in observation zone -- applies to that parking zone
     int         scoringZones     = 0;
 
     ElapsedTime autonomousTimer     = new ElapsedTime();  // overall
     ElapsedTime motionTimer         = new ElapsedTime();  // for driving
-    ElapsedTime autoViperMotorTimer = new ElapsedTime();
-    ElapsedTime autoTiltMotorTimer  = new ElapsedTime();
-    ElapsedTime autoPanMotorTimer   = new ElapsedTime();
-    ElapsedTime autoElbowServoTimer = new ElapsedTime();
-    ElapsedTime autoWristServoTimer = new ElapsedTime();
-    ElapsedTime autoClawServoTimer  = new ElapsedTime();
 
     // gamepad controls for changing autonomous options
     boolean gamepad1_circle_last,   gamepad1_circle_now  =false;
@@ -218,23 +205,23 @@ public abstract class AutonomousBase extends LinearOpMode {
 
     /*---------------------------------------------------------------------------------*/
     // Create a time stamped folder in the Robot Control flash file storage
-    public void createAutoStorageFolder( boolean isRed, boolean isLeft ) {
+    public void createAutoStorageFolder( boolean isRed, boolean isFar ) {
         // Create a subdirectory based on DATE
 //      String timeString = new SimpleDateFormat("hh-mm-ss", Locale.getDefault()).format(new Date());
         String dateString = new SimpleDateFormat("yyyy-MM-dd", Locale.getDefault()).format(new Date());
         storageDir = Environment.getExternalStorageDirectory().getPath() + "//FIRST//Webcam//" + dateString;
 
         if (isRed) {
-            if (isLeft) {
-                storageDir += "//red_left//";
+            if (isFar) {
+                storageDir += "//red_far//";
             } else {
-                storageDir += "//red_right//";
+                storageDir += "//red_near//";
             }
         } else {
-            if (isLeft) {
-                storageDir += "//blue_left//";
+            if (isFar) {
+                storageDir += "//blue_far//";
             } else {
-                storageDir += "//blue_right//";
+                storageDir += "//blue_near//";
             }
         }
         // If we save more than one file per Autonomous run, use both DATE & TIME
@@ -456,122 +443,6 @@ public abstract class AutonomousBase extends LinearOpMode {
         }
         return scaleFactor;
     }
-
-    /**
-     * @param leftWall - true strafe to left wall, false strafe to right wall
-     * @param maxSpeed - The speed to use when going large distances
-     * @param distanceFromWall - The distance to make the robot parallel to the wall in cm
-     * @param timeout - The maximum amount of time to wait until giving up
-     * @return true if reached distance, false if timeout occurred first
-     */
-    public boolean strafeToWall(boolean leftWall, double maxSpeed, int distanceFromWall, int timeout) {
-        double maxPower = Math.abs(maxSpeed);
-        boolean reachedDestination = false;
-        int allowedError = 2; // in cm
-        double angleErrorMult = 0.014;
-        double distanceErrorMult = 0.014;
-        ElapsedTime timer = new ElapsedTime();
-        int sensorDistance;
-        int distanceError;
-        performEveryLoop();
-        double driveAngle = robot.headingIMU();
-        double angleError;
-        double rotatePower;
-        double drivePower;
-        double fl, fr, bl, br;
-        double scaleFactor;
-        timer.reset();
-        while(opModeIsActive() && !reachedDestination && (timer.milliseconds() < timeout)) {
-            performEveryLoop();
-            //sensorDistance = leftWall ? robot.singleSonarRangeL() : robot.singleSonarRangeR();
-            sensorDistance = 10;
-            distanceError = sensorDistance - distanceFromWall;
-            if(Math.abs(distanceError) > allowedError) {
-                // Right is negative angle, left positive
-                angleError = getError(driveAngle);
-                rotatePower = angleError * angleErrorMult;
-                drivePower = distanceError * distanceErrorMult;
-                drivePower = leftWall ? drivePower : -drivePower;
-                drivePower = Math.copySign(Math.min(Math.max(Math.abs(drivePower), HardwareSwyftBot.MIN_STRAFE_POW), maxPower), drivePower);
-                fl = -drivePower + rotatePower;
-                fr = drivePower - rotatePower;
-                bl = drivePower + rotatePower;
-                br = -drivePower - rotatePower;
-                scaleFactor = scalePower(fl, fr, bl, br);
-                robot.driveTrainMotors(scaleFactor*fl,
-                        scaleFactor*fr,
-                        scaleFactor*bl,
-                        scaleFactor*br);
-            } else {
-                robot.driveTrainMotorsZero();
-                reachedDestination = true;
-            }
-        }
-        // Timed out
-        if(!reachedDestination) {
-            robot.driveTrainMotorsZero();
-        }
-
-        return reachedDestination;
-    } // strafeToWall
-
-    /**
-     * @param frontWall - true drive to front wall, false drive to back wall
-     * @param maxSpeed - The speed to use when going large distances
-     * @param distanceFromWall - The distance to make the robot parallel to the wall in cm
-     * @param timeout - The maximum amount of time to wait until giving up
-     * @return true if reached distance, false if timeout occurred first
-     */
-    public boolean driveToWall(boolean frontWall, double maxSpeed, int distanceFromWall, int timeout) {
-        double maxPower = Math.abs(maxSpeed);
-        boolean reachedDestination = false;
-        int allowedError = 2; // in cm
-        double angleErrorMult = 0.014;
-        double distanceErrorMult = 0.014;
-        ElapsedTime timer = new ElapsedTime();
-        int sensorDistance;
-        int distanceError;
-        performEveryLoop();
-        double driveAngle = robot.headingIMU();
-        double angleError;
-        double rotatePower;
-        double drivePower;
-        double fl, fr, bl, br;
-        double scaleFactor;
-        timer.reset();
-        while(opModeIsActive() && !reachedDestination && (timer.milliseconds() < timeout)) {
-            performEveryLoop();
- //         sensorDistance = frontWall ? robot.singleSonarRangeF() : robot.singleSonarRangeB();
-            sensorDistance = 10;
-
-            distanceError = sensorDistance - distanceFromWall;
-            if(Math.abs(distanceError) > allowedError) {
-                angleError = getError(driveAngle);
-                rotatePower = angleError * angleErrorMult;
-                drivePower = distanceError * distanceErrorMult;
-                drivePower = frontWall ? drivePower : -drivePower;
-                drivePower = Math.copySign(Math.min(Math.max(Math.abs(drivePower), robot.MIN_DRIVE_POW), maxPower), drivePower);
-                fl = drivePower + rotatePower;
-                fr = drivePower - rotatePower;
-                bl = drivePower + rotatePower;
-                br = drivePower - rotatePower;
-                scaleFactor = scalePower(fl, fr, bl, br);
-                robot.driveTrainMotors(scaleFactor*fl,
-                        scaleFactor*fr,
-                        scaleFactor*bl,
-                        scaleFactor*br);
-            } else {
-                robot.driveTrainMotorsZero();
-                reachedDestination = true;
-            }
-        }
-        // Timed out
-        if(!reachedDestination) {
-            robot.driveTrainMotorsZero();
-        }
-
-        return reachedDestination;
-    } // driveToWall
 
     //============================ TIME-BASED NAVIGATION FUNCTIONS ============================
 
@@ -1183,5 +1054,68 @@ public abstract class AutonomousBase extends LinearOpMode {
         return angleDegrees;
     } // AngleWrapDegrees
 
+    /*--------------------------------------------------------------------------------------------*/
+    public void scorePreloadBallsFromFar(int obeliskID, boolean isRed, double shooterPower ) {
+        if( opModeIsActive() ) {
+            telemetry.addData("Motion", "Flywheel Ramp Up");
+            telemetry.update();
+            // Start to ramp up the shooter
+            robot.shooterMotor1.setPower( shooterPower );
+            robot.shooterMotor2.setPower( shooterPower );
+            // Back up 12" (assumes robot starts facing the wall, not the obelisk)
+            driveToPosition(-12.0, 0.0, 0.0, DRIVE_SPEED_10, TURN_SPEED_15, DRIVE_TO);
+            // Swivel the turret toward the RED or BLUE goal
+            robot.shooterServo.setPosition(0.5);  // NOT ACTUALLY USED
+            robot.turretServo1.setPosition( (isRed)? 0.55 : 0.43 ); // right toward RED or left toward BLUE
+            // Turn on collector to help retain balls during spindexing
+            robot.intakeMotor.setPower(0.90);
+            sleep(4000 ); // Wait a bit longer for flywheels to reach speed
+            // Convert the obelisk value into a shooting order
+            HardwareSwyftBot.SpindexerState[] shootOrder = getObeliskShootOrder(obeliskID);
+            // Shoot all 3 preloaded balls
+            for(int i=0; i<shootOrder.length; i++) {
+                // rotate (if necessary) to the next position
+                robot.spinServoSetPosition( shootOrder[i] );
+                // wait for the rotation to complete, then launch that ball
+                sleep(2000 );
+                launchBall();
+                if( !opModeIsActive() ) break;
+            }
+        } // opModeIsActive
+    } // scorePreloadBalls
+
+    //--------------------------------------------------------------------------------------------
+    HardwareSwyftBot.SpindexerState[] getObeliskShootOrder(int obeliskID) {
+        // Note: common OBELISK april tags for both RED & BLUE alliance
+        //  21 = GPP (green purple purple)
+        //  22 = PGP (purple green purple)
+        //  23 = PPG (purple purple green)
+
+        // Based on our preload pattern:
+        // SPIN_P2 = purple
+        // SPIN_P1 = purple
+        // SPIN_P3 = green
+
+        switch (obeliskID) {
+            case 21:
+                return new HardwareSwyftBot.SpindexerState[] {SPIN_P3, SPIN_P2, SPIN_P1};
+            case 22:
+                return new HardwareSwyftBot.SpindexerState[] {SPIN_P2, SPIN_P3, SPIN_P1};
+            case 23:
+                return new HardwareSwyftBot.SpindexerState[] {SPIN_P2, SPIN_P1, SPIN_P3};
+            default:
+                return new HardwareSwyftBot.SpindexerState[0];
+        }
+    } // getObeliskShootOrder
+
+    //--------------------------------------------------------------------------------------------
+    public void launchBall(){
+        robot.startInjectionStateMachine();
+        do {
+            sleep(50);
+            if( !opModeIsActive() ) break;
+            performEveryLoop();
+        } while (robot.liftServoBusyU || robot.liftServoBusyD);
+    } // launchBall
 
 } // AutonomousBase

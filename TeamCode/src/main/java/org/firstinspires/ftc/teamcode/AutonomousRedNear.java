@@ -6,7 +6,8 @@ import com.qualcomm.hardware.limelightvision.LLResult;
 import com.qualcomm.hardware.limelightvision.LLResultTypes;
 import com.qualcomm.hardware.limelightvision.Limelight3A;
 import com.qualcomm.robotcore.eventloop.opmode.Autonomous;
-import com.qualcomm.robotcore.util.ElapsedTime;
+
+import org.firstinspires.ftc.teamcode.HardwareSwyftBot.SpindexerState;
 
 import java.util.List;
 
@@ -24,7 +25,7 @@ public class AutonomousRedNear extends AutonomousBase {
     double pos_y=robotGlobalYCoordinatePosition, pos_x=robotGlobalXCoordinatePosition, pos_angle=robotOrientationRadians;  // Allows us to specify movement ABSOLUTELY
 
     private Limelight3A limelight;
-    private int         obeliskID=21; // if we can't see it, assume GPP (green purple purple)
+    private int         obeliskID=23; // if we can't see it, default to PPG (purple purple green)
 
     @Override
     public void runOpMode() throws InterruptedException {
@@ -163,24 +164,16 @@ public class AutonomousRedNear extends AutonomousBase {
             //  21 = GPP (green purple purple)
             //  22 = PGP (purple green purple)
             //  23 = PPG (purple purple green)
-            for(int i=0; i<3; i++) {
-                launchBall();
+            SpindexerState[] shootOrder = getObeliskShootOrder(obeliskID);
+            for(int i=0; i<shootOrder.length; i++) {
                 // rotate to the next position
-                robot.spinServoSetPosition( HardwareSwyftBot.spindexerStateEnum.SPIN_DECREMENT );
+                robot.spinServoSetPosition( shootOrder[i] );
+                launchBall();
                 if( !opModeIsActive() ) break;
                 sleep(2000 );
             }
         } // opModeIsActive
     } // scoreSamplePreload
-
-    private void launchBall(){
-        robot.startInjectionStateMachine();
-        do {
-            sleep(50);
-            if( !opModeIsActive() ) break;
-            performEveryLoop();
-        } while (robot.liftServoBusyU || robot.liftServoBusyD);
-    }
 
     private void driveToFirstTickMark() {
 //        driveToPosition()

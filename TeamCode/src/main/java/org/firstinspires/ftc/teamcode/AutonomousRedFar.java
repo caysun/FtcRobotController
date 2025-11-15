@@ -6,7 +6,6 @@ import com.qualcomm.hardware.limelightvision.LLResult;
 import com.qualcomm.hardware.limelightvision.LLResultTypes;
 import com.qualcomm.hardware.limelightvision.Limelight3A;
 import com.qualcomm.robotcore.eventloop.opmode.Autonomous;
-import com.qualcomm.robotcore.util.ElapsedTime;
 
 import java.util.List;
 
@@ -24,7 +23,7 @@ public class AutonomousRedFar extends AutonomousBase {
     double pos_y=robotGlobalYCoordinatePosition, pos_x=robotGlobalXCoordinatePosition, pos_angle=robotOrientationRadians;  // Allows us to specify movement ABSOLUTELY
 
     private Limelight3A limelight;
-    private int         obeliskID=21; // if we can't see it, assume GPP (green purple purple)
+    private int         obeliskID=23; // if we can't see it, default to PPG (purple purple green)
 
     @Override
     public void runOpMode() throws InterruptedException {
@@ -123,8 +122,8 @@ public class AutonomousRedFar extends AutonomousBase {
             sleep( startDelaySec * 1000 );
         }
 
-        // Score Preload Balls
-        scorePreloadBalls( obeliskID );
+        // Score Preload Balls from the FAR zone
+        scorePreloadBallsFromFar( obeliskID, redAlliance, 0.55 );
 //      driveToFirstTickMark();
 //      scorePreloadBalls();
 
@@ -135,49 +134,6 @@ public class AutonomousRedFar extends AutonomousBase {
         robot.driveTrainMotorsZero();
     } // mainAutonomous
 
-    /*--------------------------------------------------------------------------------------------*/
-    private void scorePreloadBalls( int obeliskID ) {
-        // Turn on flywheel motor
-        if( opModeIsActive() ) {
-            telemetry.addData("Motion", "Flywheel Ramp Up");
-            telemetry.update();
-            // Start to ramp up the shooter
-            double shooterPower = 0.55;
-            robot.shooterMotor1.setPower( shooterPower );
-            robot.shooterMotor2.setPower( shooterPower );
-            // Start with robot facing the goal (not the obelisk)
-            driveToPosition(-12.0, 0.0, 0.0, DRIVE_SPEED_10, TURN_SPEED_15, DRIVE_TO);
-            // Drive forward and rotate 180deg so we can shoot
-//          driveToPosition(11.0, 0.0, 0.0, DRIVE_SPEED_30, TURN_SPEED_30, DRIVE_THRU);
-            // Point the turret toward the goal
-            robot.shooterServo.setPosition(0.5);  // NOT ACTUALLY USED
-            robot.turretServo1.setPosition(0.55); // rotated right toward RED goal
-//          driveToPosition(28.5, 0.0, -179.0, DRIVE_SPEED_30, TURN_SPEED_15, DRIVE_TO);
-            // Turn on the collector to help retain balls during spindexing
-            robot.intakeMotor.setPower(0.90);
-            sleep(4000 ); // Wait a bit longer for flywheels to reach speed
-            // spindexer is loaded in P3=PURPLE P2=PURPLE P1=GREEN order
-            //  21 = GPP (green purple purple)
-            //  22 = PGP (purple green purple)
-            //  23 = PPG (purple purple green)
-            for(int i=0; i<3; i++) {
-                launchBall();
-                // rotate to the next position
-                robot.spinServoSetPosition( HardwareSwyftBot.spindexerStateEnum.SPIN_DECREMENT );
-                if( !opModeIsActive() ) break;
-                sleep(2000 );
-            }
-        } // opModeIsActive
-    } // scoreSamplePreload
-
-    private void launchBall(){
-        robot.startInjectionStateMachine();
-        do {
-            sleep(50);
-            if( !opModeIsActive() ) break;
-            performEveryLoop();
-        } while (robot.liftServoBusyU || robot.liftServoBusyD);
-    }
 
     private void driveToFirstTickMark() {
 //        driveToPosition()
