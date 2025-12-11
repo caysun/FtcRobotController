@@ -13,6 +13,7 @@ import com.qualcomm.robotcore.hardware.Gamepad;
 import org.firstinspires.ftc.robotcore.external.navigation.AngleUnit;
 import org.firstinspires.ftc.robotcore.external.navigation.DistanceUnit;
 import org.firstinspires.ftc.robotcore.external.navigation.Pose2D;
+import org.firstinspires.ftc.robotcore.external.navigation.UnnormalizedAngleUnit;
 
 import java.util.Locale;
 
@@ -133,27 +134,26 @@ public abstract class Teleop extends LinearOpMode {
                 curX     = pos.getX(DistanceUnit.INCH);
                 curY     = pos.getY(DistanceUnit.INCH);
                 curAngle = pos.getHeading(AngleUnit.DEGREES);
-                String posStr = String.format(Locale.US, "{X,Y: %.1f, %.1f in  H: %.1f deg}", curX, curY, curAngle);
-                telemetry.addData("Position", posStr);
-                //==== TEMPORARY ODOMETRY CALIBRATION CODE ============================================================
-//              if(curX<minX){minX=curX;} if(curX>maxX){maxX=curX;}
-//              if(curY<minY){minY=curY;} if(curY>maxY){maxY=curY;}
-//              double x_radius_mm = 25.4 * (maxX-minX)/2.0;  // rotate 180deg; max-min is the diameter of the circle
-//              double y_radius_mm = 25.4 * (maxY-minY)/2.0;  // of error relative to the true center of the robot
-//              telemetry.addData("Odo Circle", "x=%.2f, y=%.2f mm", x_radius_mm, y_radius_mm );
-                //=====================================================================================================
-                Pose2D vel = robot.odom.getVelocity(); // x,y velocities in inch/sec; heading in deg/sec
-                String velStr = String.format(Locale.US,"{X,Y: %.1f, %.1f in/sec, HVel: %.2f deg/sec}",
-                     vel.getX(DistanceUnit.INCH), vel.getY(DistanceUnit.INCH), vel.getHeading(AngleUnit.DEGREES));
-                telemetry.addData("Velocity", velStr);
-                telemetry.addData("Status", robot.odom.getDeviceStatus());
-            }
+                if( true ) {  // change to "false" for tournaments
+                    String posStr = String.format(Locale.US, "{X,Y: %.1f, %.1f in  H: %.1f deg}", curX, curY, curAngle);
+                    telemetry.addData("Position", posStr);
+                }
+                if( true ) {  // change to "false" for tournaments
+                    String velStr = String.format(Locale.US, "{X,Y: %.1f, %.1f in/sec, H: %.2f deg/sec}",
+                            robot.odom.getVelX(DistanceUnit.INCH),
+                            robot.odom.getVelY(DistanceUnit.INCH),
+                            robot.odom.getHeadingVelocity(UnnormalizedAngleUnit.DEGREES));
+                    telemetry.addData("Velocity", velStr);
+                    telemetry.addData("Status", robot.odom.getDeviceStatus());
+                    telemetry.addData("Pinpoint Refresh Rate", robot.odom.getFrequency());
+                }
+            } // enableOdometry
 
             // Check for an OFF-to-ON toggle of the gamepad1 TRIANGLE button (toggles SINGLE-MOTOR drive control)
-            if( gamepad1_triangle_now && !gamepad1_triangle_last)
-            {
-                driverMode = DRIVER_MODE_SINGLE_WHEEL; // allow control of individual drive motors
-            }
+//          if( gamepad1_triangle_now && !gamepad1_triangle_last)
+//          {
+//              driverMode = DRIVER_MODE_SINGLE_WHEEL; // allow control of individual drive motors
+//          }
 
             // Check for an OFF-to-ON toggle of the gamepad1 SQUARE button (toggles DRIVER-CENTRIC drive control)
             if( gamepad1_square_now && !gamepad1_square_last)
@@ -175,12 +175,10 @@ public abstract class Teleop extends LinearOpMode {
                 }
             }
 
-            telemetry.addData("cross","Toggle Intake");
-            telemetry.addData("triangle","Single Wheel Control");
+//          telemetry.addData("triangle","Single Wheel Control");
             telemetry.addData("circle","Robot-centric (fwd/back modes)");
             telemetry.addData("square","Driver-centric (set joystick!)");
-            telemetry.addData("d-pad","Fine control (30%)");
-            telemetry.addData(" "," ");
+            telemetry.addData("d-pad","Fine control 15%)");
 
             if( processDpadDriveMode() == false ) {
                 // Control based on joystick; report the sensed values
@@ -223,9 +221,13 @@ public abstract class Teleop extends LinearOpMode {
             cycleTimeHz =  1000.0 / cycleTimeElapsed;
 
             // Update telemetry data
-            telemetry.addData("Shooter Servo", "%.3f", robot.shooterServoCurPos );
-            telemetry.addData("Shooter RPM", "%.1f", robot.shooterMotorVel );
+//          telemetry.addData("Shooter Servo", "%.3f", robot.shooterServoCurPos );
+            telemetry.addData("Shooter RPM", "%.1f %.1f", robot.shooterMotor1Vel, robot.shooterMotor2Vel );
+//          telemetry.addData("Shooter mA", "%.1f %.1f", robot.shooterMotor1Amps, robot.shooterMotor2Amps );
 //          telemetry.addData("Angles", "IMU %.2f, Pinpoint %.2f deg)", robot.headingIMU(), curAngle );
+            telemetry.addData("Spindexer Angle", "%.1f deg (%.2f)",
+                    robot.getSpindexerAngle(), robot.spindexerPowerSetting );
+            telemetry.addLine( (robot.isRobot2)? "Robot2" : "Robot1");
             telemetry.addData("CycleTime", "%.1f msec (%.1f Hz)", cycleTimeElapsed, cycleTimeHz);
             telemetry.update();
 
@@ -233,18 +235,14 @@ public abstract class Teleop extends LinearOpMode {
 //          robot.waitForTick(40);
         } // opModeIsActive
 
+        // Ensure spindexer servo stops in case we exit while the spindexer is rotating
+        robot.spinServoCR.setPower(0.0);
     } // runOpMode
 
     /*---------------------------------------------------------------------------------*/
     void performEveryLoopTeleop() {
         robot.processInjectionStateMachine();
-//      robot.processViperSlideExtension();
-//      robot.processWormTilt();
-//      processHoverArm();
-//      processSecureArm();
-//      processScoreArm();
-//      processScoreArmSpec();
-//      processSweeper();
+        robot.processSpindexerControl();
     } // performEveryLoopTeleop
 
     /*---------------------------------------------------------------------------------*/
@@ -282,7 +280,7 @@ public abstract class Teleop extends LinearOpMode {
     /*  TELE-OP: Mecanum-wheel drive control using Dpad (slow/fine-adjustment mode)    */
     /*---------------------------------------------------------------------------------*/
     boolean processDpadDriveMode() {
-        double fineControlSpeed = 0.40;
+        double fineControlSpeed = 0.15;
         boolean dPadMode = true;
         // Only process 1 Dpad button at a time
         if( gamepad1.dpad_up ) {
@@ -552,20 +550,35 @@ public abstract class Teleop extends LinearOpMode {
 
     /*---------------------------------------------------------------------------------*/
     void processSpindexer() {
-        // Rotate spindexer left or right one position
+        // Rotate spindexer left one position?
         if( gamepad2_l_bumper_now && !gamepad2_l_bumper_last) {
             robot.waitForInjector();
-            if( robot.spinServoCurPos != SPIN_P1 )
-                robot.spinServoSetPosition( SPIN_DECREMENT );
-            else
-                gamepad2.runRumbleEffect(spindexerRumbleL);            
-        } else if( gamepad2_r_bumper_now && !gamepad2_r_bumper_last) {
+            //------------
+            if (robot.isRobot1) {
+                if (robot.spinServoCurPos != SPIN_P1)
+                    robot.spinServoSetPosition(SPIN_DECREMENT);
+                else
+                    gamepad2.runRumbleEffect(spindexerRumbleL);
+            } // robot1
+            //------------
+            if (robot.isRobot2) {
+                robot.spinServoSetPositionCR(SPIN_DECREMENT);
+            } // robot2
+        }
+        // Rotate spindexer right one position?
+        else if( gamepad2_r_bumper_now && !gamepad2_r_bumper_last) {
             robot.waitForInjector();
-            if( robot.spinServoCurPos != SPIN_P3 )
-                robot.spinServoSetPosition( SPIN_INCREMENT );
-            else
-                gamepad2.runRumbleEffect(spindexerRumbleR);
-        } 
+            if( robot.isRobot1 ) {
+                if( robot.spinServoCurPos != SPIN_P3 )
+                    robot.spinServoSetPosition( SPIN_INCREMENT );
+                else
+                    gamepad2.runRumbleEffect(spindexerRumbleR);
+            } // robot1
+            //------------
+            if( robot.isRobot2 ) {
+                robot.spinServoSetPositionCR(SPIN_INCREMENT);
+            } // robot2
+        } // bumper
     } // processSpindexer
 
     /*---------------------------------------------------------------------------------*/
