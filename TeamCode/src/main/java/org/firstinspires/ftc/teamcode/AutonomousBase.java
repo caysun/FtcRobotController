@@ -1,5 +1,8 @@
 package org.firstinspires.ftc.teamcode;
 
+import static org.firstinspires.ftc.teamcode.HardwareSwyftBot.EyelidState.EYELID_CLOSED_BOTH;
+import static org.firstinspires.ftc.teamcode.HardwareSwyftBot.EyelidState.EYELID_OPEN_BOTH;
+import static org.firstinspires.ftc.teamcode.HardwareSwyftBot.SpindexerState.SPIN_DECREMENT;
 import static org.firstinspires.ftc.teamcode.HardwareSwyftBot.SpindexerState.SPIN_P1;
 import static org.firstinspires.ftc.teamcode.HardwareSwyftBot.SpindexerState.SPIN_P2;
 import static org.firstinspires.ftc.teamcode.HardwareSwyftBot.SpindexerState.SPIN_P3;
@@ -9,6 +12,9 @@ import static java.lang.Math.toRadians;
 import android.os.Environment;
 import android.os.SystemClock;
 
+import com.qualcomm.hardware.limelightvision.LLResult;
+import com.qualcomm.hardware.limelightvision.LLResultTypes;
+import com.qualcomm.hardware.limelightvision.Limelight3A;
 import com.qualcomm.robotcore.eventloop.opmode.LinearOpMode;
 import com.qualcomm.robotcore.hardware.DcMotor;
 import com.qualcomm.robotcore.util.ElapsedTime;
@@ -21,6 +27,7 @@ import org.firstinspires.ftc.robotcore.external.navigation.Pose2D;
 import java.io.File;
 import java.text.SimpleDateFormat;
 import java.util.Date;
+import java.util.List;
 import java.util.Locale;
 
 public abstract class AutonomousBase extends LinearOpMode {
@@ -63,6 +70,9 @@ public abstract class AutonomousBase extends LinearOpMode {
     static final double FIRST_SPIKE_MARK_RED_POS_X = 0.0; // TODO: Find real position
     static final double FIRST_SPIKE_MARK_RED_POS_Y = 0.0; // TODO: Find real position
 
+    public Limelight3A limelight;
+    public int         obeliskID=23; // if we can't see it, default to PPG (purple purple green)
+
     // NOTE: Initializing the odometry global X-Y and ANGLE to 0-0 and 0deg means the frame of reference for all movements is
     // the starting positiong/orientation of the robot.  An alternative is to make the bottom-left corner of the field the 0-0
     // point, with 0deg pointing forward.  That allows all absolute driveToPosition() commands to be an absolute x-y location
@@ -81,8 +91,12 @@ public abstract class AutonomousBase extends LinearOpMode {
     String      storageDir;
     boolean     redAlliance      = true;  // Is alliance BLUE (true) or RED (false)?
     boolean     forceAlliance    = false; // Override vision pipeline? (toggled during init phase of autonomous)
+    boolean     doSpikeMark1     = true;
+    boolean     doSpikeMark2     = true;
+    boolean     doSpikeMark3     = false;
+    boolean     doSpikeMark0     = false;  // the 3 balls in the corner
     int         initMenuSelected = 1;    // start on the first entry
-    int         initMenuMax      = 2;    // we have 6 total entries
+    int         initMenuMax      = 4;    // we have 6 total entries
     int         startDelaySec    = 0;     // 1: wait [seconds] at startup -- applies to both left/rigth starting positions
     int         scoringZones     = 0;
 
@@ -92,7 +106,7 @@ public abstract class AutonomousBase extends LinearOpMode {
     // be NEVER, if we either only score 9 balls total and want them to get scored at the
     // end of autonomous, or if we plan to score more than 9 total but our alliance partner
     // tasked with opening the gate.  Similiarly, after the first pre-loaded 3 balls, or 6
-    // balls or all 9 balls, depending upon other factors.  This allows dynamic selection 
+    // balls or all 9 balls, depending upon other factors.  This allows dynamic selection
     // during init.
     public enum GateOptions {
        GATE_NEVER("NEVER"),    // NEVER open the gate during Autonomous
@@ -123,7 +137,7 @@ public abstract class AutonomousBase extends LinearOpMode {
            GateOptions[] values = values();
            return values[(this.ordinal() + 1) % values.length];
        }
-       
+
        // Decrement (previous) with wrap-around back to end
        public GateOptions prev() {
            GateOptions[] values = values();
@@ -131,11 +145,11 @@ public abstract class AutonomousBase extends LinearOpMode {
            // the +values.length guarantees non-negative result when ordinal() == 0
            return values[prevIndex];
        }
-       
+
     } // enum
-    
+
     GateOptions gateOption = GateOptions.GATE_NEVER;
-    
+
     //---------------------------------------------------------------------------------------
 
     ElapsedTime autonomousTimer     = new ElapsedTime();  // overall
@@ -166,30 +180,18 @@ public abstract class AutonomousBase extends LinearOpMode {
     protected void processAutonomousInitMenu(boolean auto5) {
         // Refresh the gamepad controls
         captureGamepad1Buttons();
+        // Update mechanisms (including bulkread, spindexer & odometry)
+        performEveryLoop();
+
+        // Once 3 balls are loaded, press X to close eyelids
+        if( gamepad1_cross_now && !gamepad1_cross_last) {
+            robot.eyelidServoSetPosition( EYELID_CLOSED_BOTH );
+        }
 
         boolean nextEntry = (gamepad1_dpad_down_now  && !gamepad1_dpad_down_last);
         boolean prevEntry = (gamepad1_dpad_up_now    && !gamepad1_dpad_up_last);
         boolean nextValue = (gamepad1_dpad_right_now && !gamepad1_dpad_right_last);
         boolean prevValue = (gamepad1_dpad_left_now  && !gamepad1_dpad_left_last);
-
-        // Force RED alliance?
-        if( gamepad1_circle_now && !gamepad1_circle_last ) {
-            redAlliance = true;  // gamepad circle is colored RED
-            forceAlliance = true;
-        }
-        // Force BLUE alliance?
-        else if( gamepad1_cross_now && !gamepad1_cross_last ) {
-            redAlliance = false;   // gamepad cross is colored BLUE
-            forceAlliance = true;
-        }
-        // If we've not FORCED a red/blue alliance, report real-time detection
-//        if( !forceAlliance ) {
-//            redAlliance = pipelineBack.redAlliance;
-//        }
-//        telemetry.addData("STARTING", "%s", (pipelineBack.leftSide)? "LEFT" : "RIGHT");
-
-        telemetry.addData("ALLIANCE", "%s %c (X=blue O=red)",
-                ((redAlliance)? "RED":"BLUE"), ((forceAlliance)? '*':' '));
 
         // Shift DOWN one menu entry?
         if( nextEntry ) {
@@ -230,19 +232,43 @@ public abstract class AutonomousBase extends LinearOpMode {
                 if( prevValue ) {
                   gateOption = gateOption.prev();
                 } // prev
-                break;                
+                break;
+            //-------------- COLLECT/SCORE SPIKEMARK 1 --------------
+            case 3 :
+                if( nextValue ) {
+                    doSpikeMark1 = !doSpikeMark1;
+                } // next
+
+                if( prevValue ) {
+                    doSpikeMark1 = !doSpikeMark1;
+                } // prev
+                break;
+            //-------------- COLLECT/SCORE SPIKEMARK 2 --------------
+            case 4 :
+                if( nextValue ) {
+                    doSpikeMark2 = !doSpikeMark2;
+                } // next
+
+                if( prevValue ) {
+                    doSpikeMark2 = !doSpikeMark2;
+                } // prev
+                break;
+            //-------------- SHOULDN'T GET HERE --------------
             default : // recover from bad state
                 initMenuSelected = 1;
                 break;
         } // switch()
 
         // Update our telemetry
-        performEveryLoop();
+        telemetry.addData("ALLIANCE", "%s", ((redAlliance)? "RED":"BLUE"));
         telemetry.addData("Start Delay",  "%d sec %s", startDelaySec, ((initMenuSelected==1)? "<-":"  ") );
         telemetry.addData("Open Gate", "%s %s", gateOption.getDescription(), ((initMenuSelected==2)? "<-":"  ") );
+        telemetry.addData("Do SpikeMark1", "%s %s", ((doSpikeMark1)?"yes":"no"), ((initMenuSelected==3)? "<-":"  ") );
+        telemetry.addData("Do SpikeMark2", "%s %s", ((doSpikeMark2)?"yes":"no"), ((initMenuSelected==4)? "<-":"  ") );
         telemetry.addData("Odometry","x=%.2f y=%.2f  %.2f deg",
                 robotGlobalXCoordinatePosition, robotGlobalYCoordinatePosition, Math.toDegrees(robotOrientationRadians) );
-        telemetry.addLine("Preload=PPG (Green in front right!)");
+        telemetry.addLine("Preload=GPP (Green down thru shooter!)");
+        telemetry.addLine("Press X to close eyelids");
         telemetry.addData(">","version 100" );
         telemetry.update();
     } // processAutonomousInitMenu
@@ -250,9 +276,9 @@ public abstract class AutonomousBase extends LinearOpMode {
     /*--------------------------------------------------------------------------------------------*/
     // Resets odometry starting position and angle to zero accumulated encoder counts
     public void resetGlobalCoordinatePosition(){
-//      robot.odom.resetPosAndIMU();   // don't need a full recalibration, just reset for any movement
-        robot.odom.setOffsets(0.0, 0.0, DistanceUnit.MM);
-//      robot.odom.setHeading( 180.0, AngleUnit.DEGREES ); // start pointing backward!
+//      robot.odom.resetPosAndIMU();   // don't need full recalibration; just reset our position in case of any movement
+        Pose2D startPosAuto = new Pose2D(DistanceUnit.INCH, 0.0, 0.0, AngleUnit.DEGREES, 0.0);
+        robot.odom.setPosition(startPosAuto);
         robotGlobalXCoordinatePosition = 0.0;  // This will get overwritten the first time
         robotGlobalYCoordinatePosition = 0.0;  // we call robot.odom.update()!
         robotOrientationRadians        = 0.0;
@@ -267,7 +293,27 @@ public abstract class AutonomousBase extends LinearOpMode {
         robotGlobalYCoordinatePosition = pos.getY(DistanceUnit.INCH);
         robotOrientationRadians        = pos.getHeading(AngleUnit.RADIANS);
         robot.processInjectionStateMachine();
+//      robot.processSpindexerControl();  // only for continuous rotation
     } // performEveryLoop
+
+    public void processLimelightObelisk() {
+        LLResult result = limelight.getLatestResult();
+        if (result.isValid()) {
+            // Access fiducial results
+            List<LLResultTypes.FiducialResult> fiducialResults = result.getFiducialResults();
+            for (LLResultTypes.FiducialResult fr : fiducialResults) {
+                int limelightID = fr.getFiducialId();
+                // Note: common OBELISK april tags for both RED & BLUE alliance
+                //  21 = GPP (green purple purple)
+                //  22 = PGP (purple green purple)
+                //  23 = PPG (purple purple green)
+                if( (limelightID >= 21) && (limelightID <= 23) ) {
+                    telemetry.addData("Obelisk", "ID: %d", limelightID);
+                    obeliskID = limelightID;
+                }
+            } // fiducialResults
+        } // isValid
+    } // processLimelightObelisk
 
     /*---------------------------------------------------------------------------------*/
     // Create a time stamped folder in the Robot Control flash file storage
@@ -672,11 +718,11 @@ public abstract class AutonomousBase extends LinearOpMode {
     } // gyroDrive()
 
     //============================ ODOMETRY-BASED NAVIGATION FUNCTIONS ============================
-    public void driveToPosition(double yTarget, double xTarget, double angleTarget,
+    public void driveToPosition(double xTarget, double yTarget, double angleTarget,
                                 double speedMax, double turnMax, int driveType) {
         // Loop until we get to destination.
         performEveryLoop();
-        while(!driveToXY(yTarget, xTarget, angleTarget,
+        while(!driveToXY( xTarget, yTarget, angleTarget,
                 speedMax, driveType)
                 && opModeIsActive()) {
             performEveryLoop();
@@ -785,91 +831,106 @@ public abstract class AutonomousBase extends LinearOpMode {
         return reachedDestination;
     }
 
-    /**
-     * @param xTarget           - The X field coordinate to go to.
-     * @param yTarget           - The Y field coordinate to go to.
-     * @param angleTarget - The angle the robot should try to face when reaching destination in degrees.
-     * @param speedMin    - The minimum speed that allows movement.
-     * @param speedMax    - Sets the maximum speed to drive.
-     * @param errorMultiplier - Sets the proportional speed to slow down.
-     * @param errorAllowed - Sets the allowable error to claim target reached.
-     * @param driveType - Allows waypoint to be a drive through where the robot won't slow down.
-     * @return - Boolean true we have reached destination, false we have not
-     */
-    protected boolean driveToXY(double yTarget, double xTarget, double angleTarget, double speedMin,
-                                double speedMax, double errorMultiplier, double errorAllowed,
-                                int driveType) {
-        boolean reachedDestination = false;
-        double xWorld = robotGlobalXCoordinatePosition;  // inches
-        double yWorld = robotGlobalYCoordinatePosition;  // inches
-        double xMovement = 0.0, yMovement = 0.0, turnMovement = 0.0;
-        // Not sure why, but the x and y are backwards
-        double deltaX = xTarget - xWorld;
-        double deltaY = yTarget - yWorld;
-        double driveAngle = Math.atan2(deltaY, deltaX);
-        double deltaAngle = AngleWrapRadians(toRadians(angleTarget) - robotOrientationRadians);
-        double magnitude = Math.sqrt(deltaX * deltaX + deltaY * deltaY);
-        double driveSpeed;
-        double turnSpeed = Math.toDegrees(deltaAngle) * errorMultiplier;
-        // Have to convert from world angles to robot centric angles.
-        double robotDriveAngle = driveAngle - robotOrientationRadians;
+/**
+ * Drives the robot to a field-centric (X, Y) position while facing a desired angle.
+ * 
+ * @param xTarget         - The X field coordinate to go to (forward is +X)
+ * @param yTarget         - The Y field coordinate to go to (left is +Y)
+ * @param angleTarget     - The angle [deg] robot should face at destination (CCW positive)
+ * @param speedMin        - Minimum speed that allows movement
+ * @param speedMax        - Maximum speed to drive
+ * @param errorMultiplier - Proportional gain for slowing down as we approach target
+ * @param errorAllowed    - Distance error (inches) considered "reached"
+ * @param driveType       - Use DRIVE_THRU for waypoints you want to pass through without stopping
+ * @return                - true when target is reached (within errorAllowed)
+ */
+protected boolean driveToXY(double xTarget, double yTarget, double angleTarget, double speedMin,
+                            double speedMax, double errorMultiplier, double errorAllowed,
+                            int driveType) {
+    boolean reachedDestination = false;
 
-        // This will allow us to do multi-point routes without huge slowdowns.
-        // Such use cases will be changing angles, or triggering activities at
-        // certain points.
-        if(!(driveType == DRIVE_THRU)) {
-            driveSpeed = magnitude * errorMultiplier;
-        } else {
-            driveSpeed = speedMax;
-        }
+    double xWorld = robotGlobalXCoordinatePosition;  // inches
+    double yWorld = robotGlobalYCoordinatePosition;  // inches
 
-        if(driveSpeed < speedMin) {
-            driveSpeed = speedMin;
-        } else if (driveSpeed > speedMax) {
-            driveSpeed = speedMax;
-        }
+    double deltaX = xTarget - xWorld;
+    double deltaY = yTarget - yWorld;
 
-        // Check if we passed through our point
-        if(magnitude <= errorAllowed) {
-            reachedDestination = true;
-            if(!(driveType == DRIVE_THRU)) {
-                robot.stopMotion();
-            } else {
-                // This can happen if the robot is already at error distance for drive through
-                xMovement = driveSpeed * Math.cos(robotDriveAngle);
-                yMovement = driveSpeed * Math.sin(robotDriveAngle);
-                turnMovement = turnSpeed;
-                ApplyMovement(yMovement, xMovement, turnMovement);
-            }
-        } else {
-            xMovement = driveSpeed * Math.cos(robotDriveAngle);
-            yMovement = driveSpeed * Math.sin(robotDriveAngle);
-            turnMovement = turnSpeed;
-            ApplyMovement(yMovement, xMovement, turnMovement);
-        }
+    // Angle from robot to target point in world frame (0deg = +X forward, 90deg = +Y left)
+    double driveAngle = Math.atan2(deltaY, deltaX);
 
-        boolean ODOMETRY_DEBUG = false;
-        if( ODOMETRY_DEBUG ) {
-            sleep(250);       // allow 0.25 seconds of progress (from prior loop)...
-            robot.driveTrainMotorsZero(); // then stop and observe
-            telemetry.addData("World X (inches)", "%.2f in", xWorld );
-            telemetry.addData("World Y (inches)", "%.2f in", yWorld );
-            telemetry.addData("Orientation (deg)","%.2f deg", Math.toDegrees(robotOrientationRadians) );
-            telemetry.addData("distanceToPoint", "%.2f in", magnitude);
-            telemetry.addData("angleToPoint", "%.4f deg", Math.toDegrees(driveAngle));
-            telemetry.addData("deltaAngleToPoint", "%.4f deg", Math.toDegrees(deltaAngle));
-            telemetry.addData("relative_x_to_point", "%.2f in", deltaX);
-            telemetry.addData("relative_y_to_point", "%.2f in", deltaY);
-            //telemetry.addData("robot_radian_err", "%.4f deg", Math.toDegrees(robot_radian_err));
-            telemetry.addData("movement_x_power", "%.2f", xMovement);
-            telemetry.addData("movement_y_power", "%.2f", yMovement);
-            telemetry.addData("rotation_power", "%.2f", turnMovement);
-            telemetry.update();
-            sleep(5000);  // so we can read the output above
-        } // ODOMETRY_DEBUG
+    // Desired robot orientation at target (converted to radians)
+    double deltaAngle = AngleWrapRadians(Math.toRadians(angleTarget) - robotOrientationRadians);
 
-        return reachedDestination;
+    double magnitude = Math.hypot(deltaX, deltaY);
+
+    // Proportional turning speed
+    double turnSpeed = Math.toDegrees(deltaAngle) * errorMultiplier;
+
+    // Convert world-space drive direction to robot-relative angle
+    double robotDriveAngle = AngleWrapRadians(driveAngle - robotOrientationRadians);
+
+    // === SPEED CALCULATION ===
+    double driveSpeed;
+    // This will allow us to do multi-point routes without huge slowdowns.
+    // Such use cases will be changing angles, or triggering activities at
+    // certain points.
+    if (driveType != DRIVE_THRU) {
+        driveSpeed = magnitude * errorMultiplier; // slow down as we get closer
+    } else {
+        driveSpeed = speedMax; // full speed for drive-through waypoints
     }
+
+    // Clamp driveSpeed between min and max
+    driveSpeed = Math.max(speedMin, Math.min(speedMax, driveSpeed));
+
+    double xMovement, yMovement, turnMovement;
+    // Check if we passed through our point
+
+    if (magnitude <= errorAllowed) {
+        reachedDestination = true;
+
+        if (driveType != DRIVE_THRU) {
+            robot.stopMotion();
+            return true;
+        } else {
+            // Already at point but it's a drive-through, so keep moving in the direction we were going
+            xMovement = driveSpeed * Math.cos(robotDriveAngle);
+            yMovement = driveSpeed * Math.sin(robotDriveAngle); // left strafe is positive Y
+            turnMovement = turnSpeed;
+        }
+    } else {
+        // Normal case: drive toward the point
+        xMovement = driveSpeed * Math.cos(robotDriveAngle);  // FWD/BACK +X = forward
+        yMovement = driveSpeed * Math.sin(robotDriveAngle);  // STRAFE:  +Y = left
+        turnMovement = turnSpeed;
+    }
+
+    ApplyMovement(yMovement, xMovement, turnMovement);
+
+    // Optional debug telemetry (keep or remove as needed)
+    boolean ODOMETRY_DEBUG = false;
+    if (ODOMETRY_DEBUG) {
+        sleep(250);                   // allow 0.25 seconds of progress (from prior loop)...
+        robot.driveTrainMotorsZero(); // then stop and observe
+        telemetry.addData("World X (inches)", "%.2f", xWorld);
+        telemetry.addData("World Y (inches)", "%.2f", yWorld);
+        telemetry.addData("Orientation (deg)", "%.2f", Math.toDegrees(robotOrientationRadians));
+        telemetry.addData("Distance to target", "%.2f in", magnitude);
+        telemetry.addData("Drive angle (world)", "%.4f deg", Math.toDegrees(driveAngle));
+        telemetry.addData("deltaAngleToPoint", "%.4f deg", Math.toDegrees(deltaAngle));
+        telemetry.addData("relative_x_to_point", "%.2f in", deltaX);
+        telemetry.addData("relative_y_to_point", "%.2f in", deltaY);
+        //telemetry.addData("robot_radian_err", "%.4f deg", Math.toDegrees(robot_radian_err));
+        telemetry.addData("movement_x_power", "%.3f", xMovement);
+        telemetry.addData("movement_y_power", "%.3f", yMovement);
+        telemetry.addData("rotation_power", "%.3f", turnMovement);
+        telemetry.update();
+        sleep(5000);   // so we can read the output above
+    } // ODOMETRY_DEBUG
+
+    return reachedDestination;
+}
+
     /**
      * @param yTarget     - The Y field coordinate to go to.
      * @param xTarget     - The X field coordinate to go to.
@@ -878,7 +939,7 @@ public abstract class AutonomousBase extends LinearOpMode {
      * @param driveType   - Slows the robot down to stop at destination coordinate.
      * @return - Boolean true we have reached destination, false we have not
      */
-    protected boolean driveToXY(double yTarget, double xTarget, double angleTarget,
+    protected boolean driveToXY(double xTarget, double yTarget, double angleTarget,
                                 double speedMax, int driveType) {
 
         // Convert from cm to inches
@@ -886,7 +947,7 @@ public abstract class AutonomousBase extends LinearOpMode {
         double speedMin = MIN_DRIVE_MAGNITUDE;
         double allowedError = (driveType == DRIVE_THRU) ? 2.50 : 0.5;
 
-        return (driveToXY(yTarget, xTarget, angleTarget, speedMin, speedMax, errorMultiplier,
+        return (driveToXY(xTarget, yTarget, angleTarget, speedMin, speedMax, errorMultiplier,
                 allowedError, driveType));
     }
 
@@ -901,15 +962,10 @@ public abstract class AutonomousBase extends LinearOpMode {
         }
         lastUpdateTime = currTime;
 
-        // 2.1 is the ratio between the minimum power to strafe, 0.19, and driving, 0.09.
-//        double frontLeft = movement_y-movement_turn+movement_x*1.5;
-//        double backLeft = movement_y-movement_turn-movement_x*1.5;
-//        double backRight = movement_y+movement_turn+movement_x*1.5;
-//        double frontRight = movement_y+movement_turn-movement_x*1.5;
-        double frontRight = yMovement - xMovement + turnMovement;
-        double frontLeft  = yMovement + xMovement - turnMovement;
-        double backRight  = yMovement + xMovement + turnMovement;
-        double backLeft   = yMovement - xMovement - turnMovement;
+        double frontRight = xMovement + yMovement + turnMovement;
+        double frontLeft  = xMovement - yMovement - turnMovement;
+        double backRight  = xMovement - yMovement + turnMovement;
+        double backLeft   = xMovement + yMovement - turnMovement;
 
         //find the maximum of the powers
         double maxRawPower = Math.abs(frontLeft);
@@ -1095,7 +1151,7 @@ public abstract class AutonomousBase extends LinearOpMode {
      * @param angleRadians
      * @return
      */
-    public double AngleWrapRadians( double angleRadians ){
+    public double AngleWrapRadians( double angleRadians ) {
         while( angleRadians < -Math.PI ) {
             angleRadians += 2.0*Math.PI;
         }
@@ -1121,34 +1177,233 @@ public abstract class AutonomousBase extends LinearOpMode {
     } // AngleWrapDegrees
 
     /*--------------------------------------------------------------------------------------------*/
-    public void scorePreloadBallsFromFar(int obeliskID, boolean isRed, double shooterPower ) {
+    public void collectSpikemark1FromFar( boolean isRed, double shooterPower ) {
+        double x1=16.0, x2=21.0, x3=24.0;  // UNIQUE TO SPIKE1
+        double xPos, yPos, angDeg;
+        // Reset the spindexer for collecting GPP
+        robot.spinServoSetPosition( SPIN_P2 );   // GPP goes into P3, P2, P1 (shooter position; not collect position)
+        // Transition from shooting zone to spike-mark zone (spikemark #1)
         if( opModeIsActive() ) {
-            telemetry.addData("Motion", "Flywheel Ramp Up");
-            telemetry.update();
-            // Start to ramp up the shooter
-            robot.shooterMotor1.setPower( shooterPower );
-            robot.shooterMotor2.setPower( shooterPower );
-            // Back up 12" (assumes robot starts facing the wall, not the obelisk)
-            driveToPosition(-12.0, 0.0, 0.0, DRIVE_SPEED_10, TURN_SPEED_15, DRIVE_TO);
-            // Swivel the turret toward the RED or BLUE goal
-            robot.shooterServo.setPosition(0.5);  // NOT ACTUALLY USED
-            robot.turretServo.setPosition( (isRed)? 0.55 : 0.43 ); // right toward RED or left toward BLUE
-            // Turn on collector to help retain balls during spindexing
+            // drive away from the far shooting zone in a curved path toward the 1st spike mark
+            driveToPosition( x1, ((isRed)? -1.0:1.0), ((isRed)? -22.5:22.5), DRIVE_SPEED_50, TURN_SPEED_30, DRIVE_THRU);
+            driveToPosition( x2, ((isRed)? -3.0:3.0), ((isRed)? -45.0:45.0), DRIVE_SPEED_80, TURN_SPEED_30, DRIVE_THRU);
+            driveToPosition( x3, ((isRed)? -7.0:7.0), ((isRed)? -70.0:70.0), DRIVE_SPEED_80, TURN_SPEED_30, DRIVE_THRU);
+        }
+        // Collect the 3 balls at that spike mark
+        if( opModeIsActive() ) {
+            // Command both eyelid open for 1st collecting
+            robot.eyelidServoSetPosition( EYELID_OPEN_BOTH );
+            // Turn on collector
             robot.intakeMotor.setPower(0.90);
-            sleep(4000 ); // Wait a bit longer for flywheels to reach speed
+            // Drive to the final location prior to actual ball collection
+            xPos   = (isRed)? 25.0 : 30.5;  // UNIQUE TO SPIKE1
+            yPos   = (isRed)? -12.6 : +12.6;
+            angDeg = (isRed)? -90.0 : +90.0;
+            driveToPosition( xPos, yPos, angDeg, DRIVE_SPEED_20, TURN_SPEED_30, DRIVE_THRU);
+            // Drive into the 1st ball to collect it
+            yPos   = (isRed)? -19.5 : +19.5;
+            driveToPosition( xPos, yPos, angDeg, DRIVE_SPEED_20, TURN_SPEED_30, DRIVE_TO);
+            sleep(250);  // let it fully collect
+            // EYELID Dance:  close, spindex, open
+            robot.eyelidServoSetPosition( EYELID_CLOSED_BOTH );
+            sleep(750);  // wait for closure
+            robot.spinServoSetPosition( SPIN_P1 );
+            sleep(750);  // wait for spindex
+            robot.eyelidServoSetPosition( EYELID_OPEN_BOTH );
+            // Drive into the 2nd ball to collect it
+            yPos   = (isRed)? -24.9 : +24.9;
+            driveToPosition( xPos, yPos, angDeg, DRIVE_SPEED_20, TURN_SPEED_30, DRIVE_TO);
+            sleep(250);  // let it fully collect
+            // EYELID Dance:  close, spindex, open
+            robot.eyelidServoSetPosition( EYELID_CLOSED_BOTH );
+            sleep(750);  // wait for closure
+            robot.spinServoSetPosition( SPIN_P3 );
+            sleep(750);  // wait for spindex
+            robot.eyelidServoSetPosition( EYELID_OPEN_BOTH );
+            // Drive into the 3rd ball to collect it
+            yPos   = (isRed)? -30.2 : +30.2;
+            driveToPosition( xPos, yPos, angDeg, DRIVE_SPEED_20, TURN_SPEED_30, DRIVE_TO);
+            sleep(250);  // let it fully collect
+            // Command both eyelid closed for transport
+            robot.eyelidServoSetPosition( EYELID_CLOSED_BOTH );
+            sleep(250);  // wait for start of closure
+        } // opModeIsActive
+        // Drive back to the shooting zone (back the way we came!)
+        if( opModeIsActive() ) {
+            driveToPosition( x3, ((isRed)? -7.0:7.0), ((isRed)? -70.0:70.0), DRIVE_SPEED_70, TURN_SPEED_30, DRIVE_THRU);
+            // Start up the shooter motor so it can be at speed when we reach the shooting zone
+            robot.shooterMotorsSetPower( shooterPower );
+            driveToPosition( x2, ((isRed)? -3.0:3.0), ((isRed)? -45.0:45.0), DRIVE_SPEED_70, TURN_SPEED_30, DRIVE_THRU);
+            // Swivel the turret toward the RED or BLUE goal (assumes field location of 11.0/0.0/0deg)
+            robot.turretServo.setPosition( (isRed)? 0.545 : 0.435 ); // right toward RED or left toward BLUE
+            driveToPosition( x1, ((isRed)? -1.0:1.0), ((isRed)? -22.5:22.5), DRIVE_SPEED_30, TURN_SPEED_30, DRIVE_THRU);
+            driveToPosition( 10.0, ((isRed)? 0.0:0.0),  ((isRed)?  0.0:0.0),   DRIVE_SPEED_20, TURN_SPEED_30, DRIVE_TO);
+        } // opModeIsActive
+    } // collectSpikemark1FromFar
+
+    /*--------------------------------------------------------------------------------------------*/
+    public void collectSpikemark2FromFar( boolean isRed, double shooterPower ) {
+        double x1=38.0, x2=43.0, x3=47.0;  // UNIQUE TO SPIKE2
+        double xPos, yPos, angDeg;
+        // Reset the spindexer for collecting PGP
+        robot.spinServoSetPosition( SPIN_P1 );   // PGP goes into P1, P3, P2
+        // Transition from shooting zone to spike-mark zone (spikemark #1)
+        if( opModeIsActive() ) {
+            // drive away from the far shooting zone in a curved path toward the 1st spike mark
+            driveToPosition( x1, ((isRed)? -1.0:1.0), ((isRed)? -22.5:22.5), DRIVE_SPEED_50, TURN_SPEED_30, DRIVE_THRU);
+            driveToPosition( x2, ((isRed)? -3.0:3.0), ((isRed)? -45.0:45.0), DRIVE_SPEED_80, TURN_SPEED_30, DRIVE_THRU);
+            driveToPosition( x3, ((isRed)? -7.0:7.0), ((isRed)? -70.0:70.0), DRIVE_SPEED_80, TURN_SPEED_30, DRIVE_THRU);
+        }
+        // Collect the 3 balls at that spike mark
+        if( opModeIsActive() ) {
+            // Command both eyelid open for 1st collecting
+            robot.eyelidServoSetPosition( EYELID_OPEN_BOTH );
+            // Turn on collector
+            robot.intakeMotor.setPower(0.90);
+            // Drive to the final location prior to actual ball collection
+            xPos   = (isRed)? 49.3 : 54.8;  // UNIQUE TO SPIKE2
+            yPos   = (isRed)? -12.6 : +12.6;
+            angDeg = (isRed)? -90.0 : +90.0;
+            driveToPosition( xPos, yPos, angDeg, DRIVE_SPEED_20, TURN_SPEED_30, DRIVE_THRU);
+            // Drive into the 1st ball to collect it
+            yPos   = (isRed)? -19.5 : +19.5;
+            driveToPosition( xPos, yPos, angDeg, DRIVE_SPEED_20, TURN_SPEED_30, DRIVE_TO);
+            sleep(250);  // let it fully collect
+            // EYELID Dance:  close, spindex, open
+            robot.eyelidServoSetPosition( EYELID_CLOSED_BOTH );
+            sleep(750);  // wait for closure
+            robot.spinServoSetPosition( SPIN_P2 );
+            sleep(750);  // wait for spindex
+            robot.eyelidServoSetPosition( EYELID_OPEN_BOTH );
+            // Drive into the 2nd ball to collect it
+            yPos   = (isRed)? -24.9 : +24.9;
+            driveToPosition( xPos, yPos, angDeg, DRIVE_SPEED_20, TURN_SPEED_30, DRIVE_TO);
+            sleep(250);  // let it fully collect
+            // EYELID Dance:  close, spindex, open
+            robot.eyelidServoSetPosition( EYELID_CLOSED_BOTH );
+            sleep(750);  // wait for closure
+            robot.spinServoSetPosition( SPIN_P3 );
+            sleep(750);  // wait for spindex
+            robot.eyelidServoSetPosition( EYELID_OPEN_BOTH );
+            // Drive into the 3rd ball to collect it
+            yPos   = (isRed)? -30.2 : +30.2;
+            driveToPosition( xPos, yPos, angDeg, DRIVE_SPEED_20, TURN_SPEED_30, DRIVE_TO);
+            sleep(250);  // let it fully collect
+            // Command both eyelid closed for transport
+            robot.eyelidServoSetPosition( EYELID_CLOSED_BOTH );
+            sleep(250);  // wait for start of closure
+        } // opModeIsActive
+        // Drive back to the shooting zone (back the way we came!)
+/* DONT END WHILE DRIVING
+        if( opModeIsActive() ) {
+            driveToPosition( x3, ((isRed)? -7.0:7.0), ((isRed)? -70.0:70.0), DRIVE_SPEED_70, TURN_SPEED_30, DRIVE_THRU);
+            // Start up the shooter motor so it can be at speed when we reach the shooting zone
+            robot.shooterMotorsSetPower( shooterPower );
+            driveToPosition( x2, ((isRed)? -3.0:3.0), ((isRed)? -45.0:45.0), DRIVE_SPEED_70, TURN_SPEED_30, DRIVE_THRU);
+            // Swivel the turret toward the RED or BLUE goal (assumes field location of 11.0/0.0/0deg)
+            robot.turretServo.setPosition( (isRed)? 0.545 : 0.435 ); // right toward RED or left toward BLUE
+            driveToPosition( x1, ((isRed)? -1.0:1.0), ((isRed)? -22.5:22.5), DRIVE_SPEED_30, TURN_SPEED_30, DRIVE_THRU);
+            driveToPosition( 10.0, ((isRed)? 0.0:0.0),  ((isRed)?  0.0:0.0),   DRIVE_SPEED_20, TURN_SPEED_30, DRIVE_TO);
+        } // opModeIsActive
+*/
+    } // collectSpikemark2FromFar
+
+    /*--------------------------------------------------------------------------------------------*/
+    public void collectSpikemark3FromFar( boolean isRed, double shooterPower ) {
+        double x1=62.0, x2=67.0, x3=71.0;  // UNIQUE TO SPIKE3
+        double xPos, yPos, angDeg;
+        // Reset the spindexer for collecting PPG
+        robot.spinServoSetPosition( SPIN_P2 );   // PPG goes into P2, P1, P3
+        // Transition from shooting zone to spike-mark zone (spikemark #1)
+        if( opModeIsActive() ) {
+            // drive away from the far shooting zone in a curved path toward the 1st spike mark
+            driveToPosition( x1, ((isRed)? -1.0:1.0), ((isRed)? -22.5:22.5), DRIVE_SPEED_40, TURN_SPEED_30, DRIVE_THRU);
+            driveToPosition( x2, ((isRed)? -3.0:3.0), ((isRed)? -45.0:45.0), DRIVE_SPEED_60, TURN_SPEED_30, DRIVE_THRU);
+            driveToPosition( x3, ((isRed)? -7.0:7.0), ((isRed)? -70.0:70.0), DRIVE_SPEED_70, TURN_SPEED_30, DRIVE_THRU);
+        }
+        // Collect the 3 balls at that spike mark
+        if( opModeIsActive() ) {
+            // Command both eyelid open for 1st collecting
+            robot.eyelidServoSetPosition( EYELID_OPEN_BOTH );
+            // Turn on collector
+            robot.intakeMotor.setPower(0.90);
+            // Drive to the final location prior to actual ball collection
+            xPos   = (isRed)? 73.0 : 78.5;  // UNIQUE TO SPIKE3
+            yPos   = (isRed)? -12.6 : +12.6;
+            angDeg = (isRed)? -90.0 : +90.0;
+            driveToPosition( xPos, yPos, angDeg, DRIVE_SPEED_20, TURN_SPEED_30, DRIVE_THRU);
+            // Drive into the 1st ball to collect it
+            yPos   = (isRed)? -17.7 : +17.7;
+            driveToPosition( xPos, yPos, angDeg, DRIVE_SPEED_20, TURN_SPEED_30, DRIVE_TO);
+            sleep(250);  // let it fully collect
+            // EYELID Dance:  close, spindex, open
+            robot.eyelidServoSetPosition( EYELID_CLOSED_BOTH );
+            sleep(750);  // wait for closure
+            robot.spinServoSetPosition( SPIN_P1 );
+            sleep(750);  // wait for spindex
+            robot.eyelidServoSetPosition( EYELID_OPEN_BOTH );
+            // Drive into the 2nd ball to collect it
+            yPos   = (isRed)? -22.9 : +22.9;
+            driveToPosition( xPos, yPos, angDeg, DRIVE_SPEED_20, TURN_SPEED_30, DRIVE_TO);
+            // EYELID Dance:  close, spindex, open
+            robot.eyelidServoSetPosition( EYELID_CLOSED_BOTH );
+            sleep(750);  // wait for closure
+            robot.spinServoSetPosition( SPIN_P3 );
+            sleep(750);  // wait for spindex
+            robot.eyelidServoSetPosition( EYELID_OPEN_BOTH );
+            // Drive into the 3rd ball to collect it
+            yPos   = (isRed)? -29.9 : +29.9;
+            driveToPosition( xPos, yPos, angDeg, DRIVE_SPEED_20, TURN_SPEED_30, DRIVE_TO);
+            // Command both eyelid closed for transport
+            robot.eyelidServoSetPosition( EYELID_CLOSED_BOTH );
+            sleep(250);  // wait for start of closure
+        } // opModeIsActive
+        // Drive back to the shooting zone (back the way we came!)
+        if( opModeIsActive() ) {
+            driveToPosition( x3, ((isRed)? -7.0:7.0), ((isRed)? -70.0:70.0), DRIVE_SPEED_70, TURN_SPEED_30, DRIVE_THRU);
+            // Start up the shooter motor so it can be at speed when we reach the shooting zone
+            robot.shooterMotorsSetPower( shooterPower );
+            driveToPosition( x2, ((isRed)? -3.0:3.0), ((isRed)? -45.0:45.0), DRIVE_SPEED_70, TURN_SPEED_30, DRIVE_THRU);
+            // Swivel the turret toward the RED or BLUE goal (assumes field location of 11.0/0.0/0deg)
+            robot.turretServo.setPosition( (isRed)? 0.545 : 0.435 ); // right toward RED or left toward BLUE
+            driveToPosition( x1, ((isRed)? -1.0:1.0), ((isRed)? -22.5:22.5), DRIVE_SPEED_30, TURN_SPEED_30, DRIVE_THRU);
+            driveToPosition( 10.0, ((isRed)? 0.0:0.0),  ((isRed)?  0.0:0.0),   DRIVE_SPEED_20, TURN_SPEED_30, DRIVE_TO);
+        } // opModeIsActive
+    } // collectSpikemark3FromFar
+
+    /*--------------------------------------------------------------------------------------------*/
+    /* Handles the shooting of 3 balls already collected.  Assumptions:                           */
+    /* - robot is already parked in far shooting zone                                             */
+    /* - turret is already rotated toward the goal                                                */
+    /* - shooter is already up to speed                                                           */
+    public void scoreThreeBallsFromFar( int obeliskID ) {
+        if( opModeIsActive() ) {
             // Convert the obelisk value into a shooting order
             HardwareSwyftBot.SpindexerState[] shootOrder = getObeliskShootOrder(obeliskID);
-            // Shoot all 3 preloaded balls
+            // Shoot all 3 balls
             for(int i=0; i<shootOrder.length; i++) {
                 // rotate (if necessary) to the next position
-                robot.spinServoSetPosition( shootOrder[i] );
-                // wait for the rotation to complete, then launch that ball
-                sleep(2000 );
-                launchBall();
-                if( !opModeIsActive() ) break;
-            }
+               robot.spinServoSetPosition( shootOrder[i] );
+//             robot.spinServoSetPositionCR( shootOrder[i] );
+               // wait for the rotation to complete, then launch that ball
+               sleep(900);
+              launchBall();
+              if( !opModeIsActive() ) break;
+              }
         } // opModeIsActive
-    } // scorePreloadBalls
+        // Turn off shooter while we go collect more balls
+        robot.shooterMotorsSetPower( 0.0 );
+    } // scoreThreeBallsFromFar
+
+    //--------------------------------------------------------------------------------------------
+    public void launchBall(){
+        robot.startInjectionStateMachine();
+        do {
+            sleep(50);
+            if( !opModeIsActive() ) break;
+            performEveryLoop();
+        } while (robot.liftServoBusyU || robot.liftServoBusyD);
+    } // launchBall
 
     //--------------------------------------------------------------------------------------------
     HardwareSwyftBot.SpindexerState[] getObeliskShootOrder(int obeliskID) {
@@ -1173,15 +1428,5 @@ public abstract class AutonomousBase extends LinearOpMode {
                 return new HardwareSwyftBot.SpindexerState[0];
         }
     } // getObeliskShootOrder
-
-    //--------------------------------------------------------------------------------------------
-    public void launchBall(){
-        robot.startInjectionStateMachine();
-        do {
-            sleep(50);
-            if( !opModeIsActive() ) break;
-            performEveryLoop();
-        } while (robot.liftServoBusyU || robot.liftServoBusyD);
-    } // launchBall
 
 } // AutonomousBase

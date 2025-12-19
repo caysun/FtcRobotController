@@ -147,8 +147,7 @@ public class AutonomousBlueNear extends AutonomousBase {
             telemetry.update();
             // Start to ramp up the shooter
             double shooterPower = 0.55;
-            robot.shooterMotor1.setPower( shooterPower );
-            robot.shooterMotor2.setPower( shooterPower );
+            robot.shooterMotorsSetPower( shooterPower );
             // Start with robot facing the goal (not the obelisk)
             driveToPosition(-12.0, 0.0, 0.0, DRIVE_SPEED_10, TURN_SPEED_15, DRIVE_TO);
             // Drive forward and rotate 180deg so we can shoot
