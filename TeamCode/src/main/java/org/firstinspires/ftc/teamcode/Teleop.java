@@ -2,8 +2,6 @@
 */
 package org.firstinspires.ftc.teamcode;
 
-import static org.firstinspires.ftc.teamcode.HardwareSwyftBot.EyelidState.EYELID_CLOSED_BOTH;
-import static org.firstinspires.ftc.teamcode.HardwareSwyftBot.EyelidState.EYELID_OPEN_BOTH;
 import static org.firstinspires.ftc.teamcode.HardwareSwyftBot.SpindexerState.SPIN_DECREMENT;
 import static org.firstinspires.ftc.teamcode.HardwareSwyftBot.SpindexerState.SPIN_INCREMENT;
 import static org.firstinspires.ftc.teamcode.HardwareSwyftBot.SpindexerState.SPIN_P1;
@@ -11,13 +9,6 @@ import static org.firstinspires.ftc.teamcode.HardwareSwyftBot.SpindexerState.SPI
 
 import com.qualcomm.robotcore.eventloop.opmode.LinearOpMode;
 import com.qualcomm.robotcore.hardware.Gamepad;
-
-import org.firstinspires.ftc.robotcore.external.navigation.AngleUnit;
-import org.firstinspires.ftc.robotcore.external.navigation.DistanceUnit;
-import org.firstinspires.ftc.robotcore.external.navigation.Pose2D;
-import org.firstinspires.ftc.robotcore.external.navigation.UnnormalizedAngleUnit;
-
-import java.util.Locale;
 
 /**
  * TeleOp for the 2025-2026 FTC DECODE Season
@@ -55,11 +46,14 @@ public abstract class Teleop extends LinearOpMode {
     double  rearLeft, rearRight, frontLeft, frontRight, maxPower;  /* Motor power levels */
     boolean backwardDriveControl = false; // drive controls backward (other end of robot becomes "FRONT")
     boolean controlMultSegLinear = true;
-    double   curX, curY, curAngle;
+
+    double shooterPower = 0.55;  // far shooting default. scale for location.
+    double odoShootDistance, odoShootAngleDeg;
 
     boolean blueAlliance;   // set in the Blue/Red
     boolean farAlliance;    //
     int     aprilTagGoal;
+    boolean showApriltagTargetData = true;
 
     final int DRIVER_MODE_SINGLE_WHEEL = 1;
     final int DRIVER_MODE_STANDARD     = 2;
@@ -67,10 +61,10 @@ public abstract class Teleop extends LinearOpMode {
     int       driverMode               = DRIVER_MODE_STANDARD;
     double    driverAngle              = 0.0;  /* for DRIVER_MODE_DRV_CENTRIC */
 
-    boolean enableOdometry = true;
+    boolean enableOdometry   = true;
     boolean intakeMotorOnFwd = false;
     boolean intakeMotorOnRev = false;
-    boolean shooterMotorsOn = false;
+    boolean shooterMotorsOn  = false;
 
     Gamepad.RumbleEffect spindexerRumbleL;    // Can't spin further LEFT!
     Gamepad.RumbleEffect spindexerRumbleR;    // Can't spin further RIGHT!
@@ -80,6 +74,7 @@ public abstract class Teleop extends LinearOpMode {
 
     /* Declare OpMode members. */
     HardwareSwyftBot robot = new HardwareSwyftBot();
+//  LimelightFusedPinpointOdometry llodo = null;
     // sets unique behavior based on alliance
     public abstract void setAllianceSpecificBehavior();
 
@@ -99,31 +94,44 @@ public abstract class Teleop extends LinearOpMode {
                 
         // Initialize robot hardware (not autonomous mode)
         robot.init(hardwareMap,false);
+        robot.limelightStart();
+//      llodo = new LimelightFusedPinpointOdometry(robot.limelight, robot.odom, telemetry, 0.0);
+        // Establish whether this is the RED or BLUE alliance
         setAllianceSpecificBehavior();
-
-        // Send telemetry message to signify robot waiting;
-        telemetry.addData("State", "Ready");
-        telemetry.addLine("Press X (cross) to reset encoders");
-        telemetry.addLine("(to run Teleop without Auto first)");
-        telemetry.update();
+        // limelight pipelines 6 & 7 filter for the BLUE and RED goal apriltags
+        robot.limelightPipelineSwitch( (blueAlliance)? 6:7 );
+//      llodo.updatePipeline( (blueAlliance)? Alliance.BLUE : Alliance.RED);
 
         // Wait for the game to start (driver presses PLAY)
         while (!isStarted()) {
+            // Send telemetry message to signify robot waiting;
+            telemetry.addData("State", "Ready");
+            telemetry.addLine("Press X (cross) to reset encoders");
+            telemetry.addLine("(to run Teleop without Auto first)");
             // Bulk-refresh the hub data and updates our state machines (spindexer!)
             performEveryLoopTeleop();
+            telemetry.addData("Limelight","x=%.2f y=%.2f  %.2f deg (Apriltag)",
+                    robot.limelightFieldXpos, robot.limelightFieldYpos, robot.limelightFieldAngleDeg );
+            telemetry.addData("  stdev"," %.2f   %.2f    %.2f",
+                    robot.limelightFieldXstd, robot.limelightFieldYstd, robot.limelightFieldAnglestd );
+            telemetry.addData("Pinpoint","x=%.2f y=%.2f  %.2f deg (odom)",
+                    robot.robotGlobalXCoordinatePosition, robot.robotGlobalYCoordinatePosition, robot.robotOrientationDegrees );
+            telemetry.addData(" "," %.2f in/sec %.2f in/sec %.2f deg/sec",
+                    robot.robotGlobalXvelocity, robot.robotGlobalYvelocity, robot.robotAngleVelocity );
+            telemetry.update();
             // Check for operator input that changes Autonomous options
             captureGamepad1Buttons();
-            // Normally autonomous resets encoders.  Do we need to for teleop??
+            // Normally autonomous resets encoders/odometry.  Do we need to for teleop??
             if( gamepad1_cross_now && !gamepad1_cross_last) {
                 robot.resetEncoders();
-                robot.resetGlobalCoordinatePosition(); // BRODY!!
+                robot.resetGlobalCoordinatePosition();
             }
             // Pause briefly before looping
             idle();
         } // !isStarted
 
         // Ensure turret is initialized
-        robot.turretServo.setPosition(robot.TURRET_SERVO_INIT);
+        robot.turretServoSetPosition(robot.TURRET_SERVO_INIT);
 
         // run until the end of the match (driver presses STOP)
         while (opModeIsActive())
@@ -134,28 +142,6 @@ public abstract class Teleop extends LinearOpMode {
 
             // Bulk-refresh the hub data and updates our state machines
             performEveryLoopTeleop();
-
-            // Request an update from the Pinpoint odometry computer (single I2C read)
-            if( enableOdometry ) {
-                robot.odom.update();
-                Pose2D pos = robot.odom.getPosition();  // x,y pos in inch; heading in degrees
-                curX     = pos.getX(DistanceUnit.INCH);
-                curY     = pos.getY(DistanceUnit.INCH);
-                curAngle = pos.getHeading(AngleUnit.DEGREES);
-                if( true ) {  // change to "false" for tournaments
-                    String posStr = String.format(Locale.US, "{X,Y: %.1f, %.1f in  H: %.1f deg}", curX, curY, curAngle);
-                    telemetry.addData("Position", posStr);
-                }
-                if( true ) {  // change to "false" for tournaments
-                    String velStr = String.format(Locale.US, "{X,Y: %.1f, %.1f in/sec, H: %.2f deg/sec}",
-                            robot.odom.getVelX(DistanceUnit.INCH),
-                            robot.odom.getVelY(DistanceUnit.INCH),
-                            robot.odom.getHeadingVelocity(UnnormalizedAngleUnit.DEGREES));
-                    telemetry.addData("Velocity", velStr);
-                    telemetry.addData("Status", robot.odom.getDeviceStatus());
-                    telemetry.addData("Pinpoint Refresh Rate", robot.odom.getFrequency());
-                }
-            } // enableOdometry
 
             // Check for an OFF-to-ON toggle of the gamepad1 TRIANGLE button (toggles SINGLE-MOTOR drive control)
 //          if( gamepad1_triangle_now && !gamepad1_triangle_last)
@@ -183,22 +169,10 @@ public abstract class Teleop extends LinearOpMode {
                 }
             }
 
-            //BRODY!!
-            if (gamepad1_l_bumper_now && !gamepad1_l_bumper_last) {
-                robot.turretServo.setPosition(robot.computeAlignedTurretPos());
-            }
-
-            if (gamepad1_r_bumper_now && !gamepad1_r_bumper_last) {
-                // RIGHT BUTTON resets turret to the center
-                robot.turretServo.setPosition(robot.TURRET_SERVO_INIT);
-//              robot.shooterServo.setPosition(robot.computeAlignedFlapperPos());
-            }
-            //BRODY!!
-
-            telemetry.addData("cross","Toggle Intake");
-            telemetry.addData("circle","Robot-centric (fwd/back modes)");
-            telemetry.addData("square","Driver-centric (set joystick!)");
-            telemetry.addData("d-pad","Fine control 15%)");
+//          telemetry.addData("cross","Toggle Intake");
+//          telemetry.addData("circle","Robot-centric (fwd/back modes)");
+//          telemetry.addData("square","Driver-centric (set joystick!)");
+//          telemetry.addData("d-pad","Fine control 15%)");
 
             if( processDpadDriveMode() == false ) {
                 // Control based on joystick; report the sensed values
@@ -228,6 +202,7 @@ public abstract class Teleop extends LinearOpMode {
             } // processDpadDriveMode
 
             processCollector();
+            processTurretAutoAim();
             processSpindexer();
             processShooterFlap();
             processShooter();
@@ -240,25 +215,22 @@ public abstract class Teleop extends LinearOpMode {
             cycleTimeHz =  1000.0 / cycleTimeElapsed;
 
             // Update telemetry data
-//          telemetry.addData("Shooter Servo", "%.3f", robot.shooterServoCurPos );
+            telemetry.addData("Limelight","x=%.2f y=%.2f  %.2f deg (Apriltag)",
+                    robot.limelightFieldXpos, robot.limelightFieldYpos, robot.limelightFieldAngleDeg );
+            telemetry.addData("  stdev"," %.2f   %.2f    %.2f",
+                    robot.limelightFieldXstd, robot.limelightFieldYstd, robot.limelightFieldAnglestd );
+            telemetry.addData("Pinpoint","x=%.2f y=%.2f  %.2f deg (odom)",
+                   robot.robotGlobalXCoordinatePosition, robot.robotGlobalYCoordinatePosition, robot.robotOrientationDegrees );
+            telemetry.addData(" "," %.2f in/sec %.2f in/sec %.2f deg/sec", 
+                   robot.robotGlobalXvelocity, robot.robotGlobalYvelocity, robot.robotAngleVelocity );
+            telemetry.addData("Goal", "%s dist: %.2f in, angle: %.2f deg", ((blueAlliance)? "BLUE":"RED"), odoShootDistance, odoShootAngleDeg);
+            telemetry.addData("Shooter POWER", "%.2f (P1 tri/cross to adjust)", shooterPower);
             telemetry.addData("Shooter RPM", "%.1f %.1f", robot.shooterMotor1Vel, robot.shooterMotor2Vel );
 //          telemetry.addData("Shooter mA", "%.1f %.1f", robot.shooterMotor1Amps, robot.shooterMotor2Amps );
-//          telemetry.addData("Angles", "IMU %.2f, Pinpoint %.2f deg)", robot.headingIMU(), curAngle );
-            telemetry.addData("Spindexer Angle", "%.1f deg (%.2f)", robot.getSpindexerAngle(), robot.spindexerPowerSetting );
+//          telemetry.addData("IMU", "%.2f deg", robot.headingIMU() );
+//          telemetry.addData("Spindexer Angle", "%.1f deg (%.2f)", robot.getSpindexerAngle(), robot.spindexerPowerSetting );
             telemetry.addLine( (robot.isRobot2)? "Robot2" : "Robot1");
             telemetry.addData("CycleTime", "%.1f msec (%.1f Hz)", cycleTimeElapsed, cycleTimeHz);
-            if( false ) {
-              // BRODY!!
-              telemetry.addData("TurretAngle", robot.computeTurretAngle());
-              telemetry.addData("FlapperAngle", robot.computeLaunchAngle());
-              telemetry.addData("Turret Position", robot.computeAlignedTurretPos());
-              telemetry.addData("Flapper Position", robot.computeAlignedFlapperPos());
-              telemetry.addData("Robot Global X", robot.robotGlobalXCoordinatePosition);
-              telemetry.addData("Robot Global Y", robot.robotGlobalYCoordinatePosition);
-              telemetry.addData("Robot Global Orientation", robot.robotOrientationDegrees);
-              telemetry.addData("Robot Global Orientation Pinpoint", robot.odom.getPosition().getHeading(AngleUnit.DEGREES));
-              //BRODY!!
-            }
             telemetry.update();
 
             // Pause for metronome tick.  40 mS each cycle = update 25 times a second.
@@ -272,13 +244,18 @@ public abstract class Teleop extends LinearOpMode {
     void performEveryLoopTeleop() {
         robot.readBulkData();
         robot.processInjectionStateMachine();
- //     robot.processSpindexerControl();  // only for spinServoCR (not currently used)
-        //BRODY!!
-        Pose2D pos = robot.odom.getPosition();  // x,y pos in inch; heading in degrees
-        robot.robotGlobalXCoordinatePosition = pos.getX(DistanceUnit.INCH);
-        robot.robotGlobalYCoordinatePosition = pos.getY(DistanceUnit.INCH);
-        robot.robotOrientationDegrees        = pos.getHeading(AngleUnit.DEGREES);
-        //BRODY!!
+//      robot.processSpindexerControl();  // only for spinServoCR (not currently used)
+        if( enableOdometry ) {
+            robot.updatePinpointFieldPosition();
+            robot.updateLimelightFieldPosition();
+        } // enableOdometry
+        // Touchpad means to update the goBilda Pinpoint computer with the latest limelight apriltag position
+        if(gamepad1.touchpadWasPressed()){
+//          llodo.alignPinpointToLimelightEveryLoop(false);
+            // Ensure we don't get a spurious zero/clear reading
+            if( (robot.limelightFieldXpos != 0.0) && (robot.limelightFieldYpos !=0.0) && (robot.limelightFieldAngleDeg != 0.0) )
+                robot.setPinpointFieldPosition(robot.limelightFieldXpos, robot.limelightFieldYpos, robot.limelightFieldAngleDeg );
+        }
     } // performEveryLoopTeleop
 
     /*---------------------------------------------------------------------------------*/
@@ -560,15 +537,11 @@ public abstract class Teleop extends LinearOpMode {
         if( gamepad2_cross_now && !gamepad2_cross_last)
         {
             if (intakeMotorOnFwd == false){
-                // Command both eyelid open if we're collecting
-                if( robot.isRobot2) robot.eyelidServoSetPosition( EYELID_OPEN_BOTH );
                 // Turn on collector in FORWARD
                 robot.intakeMotor.setPower(0.90);
                 intakeMotorOnFwd = true;
                 intakeMotorOnRev = false;
             } else{
-                // Command both eyelid CLOSED whenever we stop collecting
-                if( robot.isRobot2) robot.eyelidServoSetPosition( EYELID_CLOSED_BOTH );
                 // Shut OFF collector
                 robot.intakeMotor.setPower(0.00);
                 intakeMotorOnFwd = false;
@@ -579,15 +552,11 @@ public abstract class Teleop extends LinearOpMode {
         if( gamepad2_square_now && !gamepad2_square_last)
         {
             if (intakeMotorOnRev == false){
-                // Command both eyelid open if we're anti-collecting
-                if( robot.isRobot2) robot.eyelidServoSetPosition( EYELID_OPEN_BOTH );
                 // Turn on collector in REVERSE
                 robot.intakeMotor.setPower(-0.90);
                 intakeMotorOnFwd = false;
                 intakeMotorOnRev = true;
             } else{
-                // Command both eyelid CLOSED whenever we stop collecting
-                if( robot.isRobot2) robot.eyelidServoSetPosition( EYELID_CLOSED_BOTH );
                 // Shut OFF collector
                 robot.intakeMotor.setPower(0.00);
                 intakeMotorOnFwd = false;
@@ -641,7 +610,18 @@ public abstract class Teleop extends LinearOpMode {
 
     /*---------------------------------------------------------------------------------*/
     void processShooter() {
-        double shooterPower = 0.55;  // function of location!!
+        if( gamepad1_triangle_now && !gamepad1_triangle_last) {
+            shooterPower += 0.01;
+            if(shooterMotorsOn) {
+                robot.shooterMotorsSetPower( shooterPower );
+            }
+        } else if( gamepad1_cross_now && !gamepad1_cross_last) {
+            shooterPower -= 0.01;
+            if(shooterMotorsOn) {
+                robot.shooterMotorsSetPower( shooterPower );
+            }
+        }
+
         // Check for an OFF-to-ON toggle of the gamepad2 CIRCLE button (toggles SHOOTER on/off)
         if( gamepad2_circle_now && !gamepad2_circle_last)
         {
@@ -654,6 +634,20 @@ public abstract class Teleop extends LinearOpMode {
             }
         }
     } // processShooter
+
+    private void processTurretAutoAim() {
+        odoShootDistance = robot.getShootDistance( (blueAlliance)? Alliance.BLUE : Alliance.RED );
+        odoShootAngleDeg = robot.getShootAngleDeg( (blueAlliance)? Alliance.BLUE : Alliance.RED );
+
+        if (gamepad1_l_bumper_now && !gamepad1_l_bumper_last) {
+            robot.setTurretAngle(odoShootAngleDeg);
+        }
+        if (gamepad1_r_bumper_now && !gamepad1_r_bumper_last) {
+            // RIGHT BUTTON resets turret to the center and resets the shooter power
+            robot.turretServoSetPosition(robot.TURRET_SERVO_INIT);
+            shooterPower = 0.55;
+        }
+    } // processTurretAutoAim
 
     /*---------------------------------------------------------------------------------*/
     void processInjector() {

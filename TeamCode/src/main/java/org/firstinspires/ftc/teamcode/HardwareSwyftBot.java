@@ -1,8 +1,9 @@
 package org.firstinspires.ftc.teamcode;
 
-
 import com.qualcomm.hardware.lynx.LynxModule;
 import com.qualcomm.hardware.rev.RevHubOrientationOnRobot;
+import com.qualcomm.hardware.limelightvision.Limelight3A;
+import com.qualcomm.hardware.limelightvision.LLResult;
 import com.qualcomm.robotcore.hardware.AnalogInput;
 import com.qualcomm.robotcore.hardware.DcMotor;
 import com.qualcomm.robotcore.hardware.DcMotorEx;
@@ -20,6 +21,10 @@ import org.firstinspires.ftc.robotcore.external.navigation.AxesReference;
 import org.firstinspires.ftc.robotcore.external.navigation.DistanceUnit;
 import org.firstinspires.ftc.robotcore.external.navigation.Orientation;
 import org.firstinspires.ftc.robotcore.external.navigation.Pose2D;
+import org.firstinspires.ftc.robotcore.external.navigation.Pose3D;
+import org.firstinspires.ftc.robotcore.external.navigation.Position;
+import org.firstinspires.ftc.robotcore.external.navigation.UnnormalizedAngleUnit;
+import org.firstinspires.ftc.robotcore.external.navigation.YawPitchRollAngles;
 
 import static com.qualcomm.hardware.rev.RevHubOrientationOnRobot.LogoFacingDirection;
 import static com.qualcomm.hardware.rev.RevHubOrientationOnRobot.UsbFacingDirection;
@@ -34,8 +39,8 @@ public class HardwareSwyftBot
     LynxModule controlHub;
     LynxModule expansionHub;
     
-    public boolean isRobot1 = false;  // see IMU initialization below
-    public boolean isRobot2 = false;
+    public boolean isRobot1 = false;  // 7592-C (see IMU initialization below)
+    public boolean isRobot2 = false;  // 7592-D
 
     //====== INERTIAL MEASUREMENT UNIT (IMU) =====
     protected IMU imu          = null;
@@ -44,6 +49,18 @@ public class HardwareSwyftBot
 
     //====== GOBILDA PINPOINT ODOMETRY COMPUTER ======
     GoBildaPinpointDriver odom;
+
+    //====== LIMELIGHT SMART CAMERA ======
+    public  Limelight3A limelight;
+    private LLResult    llResultLast;
+
+    /**
+     * https://ftc-docs.firstinspires.org/en/latest/game_specific_resources/field_coordinate_system/field-coordinate-system.html#square-field-inverted-alliance-area
+     * We currently use a field orientation that is 180º rotated from the standard FTC field,
+     * (+x -> Obelisk, -x -> audience | +y -> blue goal, -y -> red goal)
+     * so we have to adjust the values returned from the limelight camera (and the yaw fed back into it).
+     */
+    private static final boolean ROTATE_LIMELIGHT_FIELD_180 = true;
 
     //====== MECANUM DRIVETRAIN MOTORS (RUN_USING_ENCODER) =====
     protected DcMotorEx frontLeftMotor     = null;
@@ -82,19 +99,22 @@ public class HardwareSwyftBot
     // The math above assumes motor encoders.  For REV odometry pods, the counts per inch is different
     protected double COUNTS_PER_INCH2      = 1738.4;  // 8192 counts-per-rev / (1.5" omni wheel * PI)
 
-    //BRODY!!
-    // Left Corner is (0,0) Facing obelisk is 90deg
-    double startingRobotGlobalXPosition = 72; // x inches
-    double startingRobotGlobalYPosition = 24; // y inches
-    double startingRobotOrientationDegrees = 90; // field orientation in deg
-
-    Pose2D startingPos = new Pose2D(DistanceUnit.INCH, startingRobotGlobalXPosition, startingRobotGlobalYPosition, AngleUnit.DEGREES, startingRobotOrientationDegrees);
-
     // Absolute Position of Robot on the field.
     double robotGlobalXCoordinatePosition       = 0;   // inches
     double robotGlobalYCoordinatePosition       = 0;   // inches
-    double robotOrientationDegrees              = 0;   // degrees 90deg (facing obelisk)
-    //BRODY!!
+    double robotOrientationDegrees              = 0;   // degrees
+
+    double robotGlobalXvelocity                 = 0;   // inches/sec
+    double robotGlobalYvelocity                 = 0;   // inches/sec
+    double robotAngleVelocity                   = 0;   // degrees/sec
+
+    double limelightFieldXpos     = 0;
+    double limelightFieldYpos     = 0;
+    double limelightFieldAngleDeg = 0;
+
+    double limelightFieldXstd     = 0;
+    double limelightFieldYstd     = 0;
+    double limelightFieldAnglestd = 0;
 
     //====== 2025 DECODE SEASON MECHANISM MOTORS (RUN_USING_ENCODER) =====
     protected DcMotorEx intakeMotor     = null;
@@ -124,17 +144,21 @@ public class HardwareSwyftBot
     public double shooterServoCurPos = SHOOTER_SERVO_INIT;
 
     //====== TURRET 5-turn SERVOS =====
-    public Servo       turretServo    = null;  // 1 servos! (controlled together via Y cable)
-    public AnalogInput turretServoPos = null;
+    public Servo       turretServo     = null;  // 2 servos! (controlled together via Y cable)
+    public AnalogInput turretServoPos1 = null;
+    public AnalogInput turretServoPos2 = null;
 
     // NOTE: Although the turret can spin to +180deg, the cable blocks the shooter hood exit
     // once you reach +55deg, so that's our effect MAX turret angle on the right side.
     public final static double TURRET_SERVO_MAX2 = 0.93; // +180 deg (turret max)
     public final static double TURRET_SERVO_P90  = 0.73; // +90 deg
-    public final static double TURRET_SERVO_MAX  = 0.64; // +55deg
+    public final static double TURRET_SERVO_MAX  = 0.64; // +53deg
     public final static double TURRET_SERVO_INIT = 0.49; //   0 deg
     public final static double TURRET_SERVO_N90  = 0.29; // -90 deg
     public final static double TURRET_SERVO_MIN  = 0.06; // -180deg
+    public final static double TURRET_CTS_PER_DEG = (TURRET_SERVO_P90 - TURRET_SERVO_N90)/180.0;
+
+    public final static double TURRET_R1_OFFSET = -0.008; // ROBOT1 differs from our reference (ROBOT2)
 
     //====== SPINDEXER SERVO =====
     public Servo       spinServo    = null;
@@ -166,12 +190,18 @@ public class HardwareSwyftBot
         currentSpindexerTarget = values[index];
     }
 
-//  public final static double SPIN_SERVO_P1 = 0.13;    // position 1 ROBOT1
-//  public final static double SPIN_SERVO_P2 = 0.50;    // position 2 (also the INIT position)
-//  public final static double SPIN_SERVO_P3 = 0.88;    // position 3
-    public final static double SPIN_SERVO_P1 = 0.105;   // position 1 ROBOT2
-    public final static double SPIN_SERVO_P2 = 0.49;    // position 2 (also the INIT position)
-    public final static double SPIN_SERVO_P3 = 0.87;    // position 3
+    //===== ROBOT1 spindexer servo positions:
+    public final static double SPIN_SERVO_P1_R1 = 0.130;  // position 1
+    public final static double SPIN_SERVO_P2_R1 = 0.500;  // position 2 (also the INIT position)
+    public final static double SPIN_SERVO_P3_R1 = 0.880;  // position 3
+    //===== ROBOT2 spindexer servo positions:
+    public final static double SPIN_SERVO_P1_R2 = 0.105;  // position 1
+    public final static double SPIN_SERVO_P2_R2 = 0.490;  // position 2 (also the INIT position)
+    public final static double SPIN_SERVO_P3_R2 = 0.870;  // position 3
+    //===== These get populated after IMU init, when we know if we're ROBOT1 or ROBOT2
+    public double SPIN_SERVO_P1;    // position 1
+    public double SPIN_SERVO_P2;    // position 2 (also the INIT position)
+    public double SPIN_SERVO_P3;    // position 3
 
     public enum SpindexerState {
         SPIN_P1,
@@ -183,32 +213,6 @@ public class HardwareSwyftBot
     
     public SpindexerState spinServoCurPos = SpindexerState.SPIN_P2;
 
-    //====== EYELID SERVOS =====
-    public Servo       rEyelidServo      = null;   // right eyelid
-    public Servo       lEyelidServo      = null;   // left eyelid
-    public boolean     rEyelidServoBusyU = false;  // busy going UP   (opening)
-    public boolean     lEyelidServoBusyU = false;  // busy going UP   (opening)
-    public boolean     rEyelidServoBusyD = false;  // busy going DOWN (closing)
-    public boolean     lEyelidServoBusyD = false;  // busy going DOWN (closing)
-    public ElapsedTime rEyelidServoTimer = new ElapsedTime();
-    public ElapsedTime lEyelidServoTimer = new ElapsedTime();
-
-    public final static double R_EYELID_SERVO_INIT = 0.570;  // ROBOT2 only
-    public final static double R_EYELID_SERVO_UP   = 0.570;
-    public final static double L_EYELID_SERVO_INIT = 0.440;
-    public final static double L_EYELID_SERVO_UP   = 0.440;
-    public final static double R_EYELID_SERVO_DOWN = 0.295;
-    public final static double L_EYELID_SERVO_DOWN = 0.700;
-
-    public enum EyelidState {
-        EYELID_OPEN_BOTH,
-        EYELID_OPEN_R,
-        EYELID_OPEN_L,
-        EYELID_CLOSED_BOTH,
-        EYELID_CLOSED_R,
-        EYELID_CLOSED_L
-    }
-
     //====== INJECTOR/LIFTER SERVO =====
     public Servo       liftServo      = null;
     public AnalogInput liftServoPos   = null;
@@ -216,14 +220,36 @@ public class HardwareSwyftBot
     public boolean     liftServoBusyD = false;  // busy going DOWN (resetting)
     public ElapsedTime liftServoTimer = new ElapsedTime();
 
-//  public final static double LIFT_SERVO_INIT   = 0.490;  // ROBOT1
-//  public final static double LIFT_SERVO_RESET  = 0.490;
-    public final static double LIFT_SERVO_INIT   = 0.500;  // ROBOT2
-    public final static double LIFT_SERVO_RESET  = 0.500;
-    public final static double LIFT_SERVO_INJECT = 0.310;
-    //   179 (184)  . . .    (236)  241           <-- 5deg tolerance on RESET and INJECT
-    public final static double LIFT_SERVO_RESET_ANG  = 184.0;  // 0.500 = 179.5deg
-    public final static double LIFT_SERVO_INJECT_ANG = 236.0;  // 0.310 = 241.7deg
+    //===== ROBOT1 injector/lift servo positions:
+    public final static double LIFT_SERVO_INIT_R1   = 0.520;
+    public final static double LIFT_SERVO_RESET_R1  = 0.520;
+    public final static double LIFT_SERVO_INJECT_R1 = 0.330;
+      //   173 (178)  . . .    (239)  235           <-- 5deg tolerance on RESET and INJECT
+    public final static double LIFT_SERVO_RESET_ANG_R1  = 178.3;  // 0.520 = 173.3deg
+    public final static double LIFT_SERVO_INJECT_ANG_R1 = 230.2;  // 0.330 = 235.2deg
+    //===== ROBOT2 injector/lift servo positions:
+    public final static double LIFT_SERVO_INIT_R2   = 0.500;
+    public final static double LIFT_SERVO_RESET_R2  = 0.500;
+    public final static double LIFT_SERVO_INJECT_R2 = 0.310;
+      //   179 (184)  . . .    (236)  241           <-- 5deg tolerance on RESET and INJECT
+    public final static double LIFT_SERVO_RESET_ANG_R2  = 184.0;  // 0.500 = 179.5deg
+    public final static double LIFT_SERVO_INJECT_ANG_R2 = 236.0;  // 0.310 = 241.7deg
+    //===== These get populated after IMU init, when we know if we're ROBOT1 or ROBOT2
+    public double LIFT_SERVO_INIT;
+    public double LIFT_SERVO_RESET;
+    public double LIFT_SERVO_INJECT;
+    public double LIFT_SERVO_RESET_ANG;
+    public double LIFT_SERVO_INJECT_ANG;
+
+    //====== LED CONTROLLERS (controlled via SERVO signals) =====
+    public Servo  ledServo = null;   // goBilda RGB LED
+
+    public final static double LED_INIT   = 0.000;  // off
+    public final static double LED_RED    = 0.279;
+    public final static double LED_GREEN  = 0.488;
+    public final static double LED_BLUE   = 0.611;
+    public final static double LED_PURPLE = 0.723;
+
     //====== MOTIF CONSTANTS =====
     public enum MotifOptions {
         MOTIF_GPP,  // GREEN, PURPLE, PURPLE
@@ -258,6 +284,18 @@ public class HardwareSwyftBot
         // NOTE: call this first so it defines whether we're ROBOT1 or ROBOT2
         initIMU();
 
+        // define the spindexer servo positions (fine-tuned uniquely for each robot)
+        SPIN_SERVO_P1 = (isRobot1)? SPIN_SERVO_P1_R1 : SPIN_SERVO_P1_R2;
+        SPIN_SERVO_P2 = (isRobot1)? SPIN_SERVO_P2_R1 : SPIN_SERVO_P2_R2;
+        SPIN_SERVO_P3 = (isRobot1)? SPIN_SERVO_P3_R1 : SPIN_SERVO_P3_R2;
+
+        // define the shooter lift/injector servo positions (fine-tuned uniquely for each robot)
+        LIFT_SERVO_INIT       = (isRobot1)? LIFT_SERVO_INIT_R1 : LIFT_SERVO_INIT_R2;
+        LIFT_SERVO_RESET      = (isRobot1)? LIFT_SERVO_RESET_R1 : LIFT_SERVO_RESET_R2;
+        LIFT_SERVO_INJECT     = (isRobot1)? LIFT_SERVO_INJECT_R1 : LIFT_SERVO_INJECT_R2;
+        LIFT_SERVO_RESET_ANG  = (isRobot1)? LIFT_SERVO_RESET_ANG_R1 : LIFT_SERVO_RESET_ANG_R2;
+        LIFT_SERVO_INJECT_ANG = (isRobot1)? LIFT_SERVO_INJECT_ANG_R1 : LIFT_SERVO_INJECT_ANG_R2;
+
         //--------------------------------------------------------------------------------------------
         // Locate the odometry controller in our hardware settings
         odom = hwMap.get(GoBildaPinpointDriver.class,"odom");  // Expansion Hub I2C port 1
@@ -269,8 +307,10 @@ public class HardwareSwyftBot
             odom.resetPosAndIMU();
         }
 
-        // defines initial pose of robot on field.  white tip of far tape facing obelisk: x = 72in., y = 24in., orientation = 90deg.
-        odom.setPosition(startingPos);  //BRODY!!
+        //--------------------------------------------------------------------------------------------
+        // Locate the limelight3a camera in our hardware settings
+        // NOTE: Control Hub is assigned eth0 address 172.29.0.1 by limelight DHCP server
+        limelight = hwMap.get(Limelight3A.class, "limelight");
 
         //--------------------------------------------------------------------------------------------
         // Define and Initialize drivetrain motors
@@ -306,7 +346,7 @@ public class HardwareSwyftBot
 
         //--------------------------------------------------------------------------------------------
         // Define and Initialize intake motor (left side on ROBOT1, right side on ROBOT2)
-        intakeMotor  = hwMap.get(DcMotorEx.class,"IntakeMotor");  // Expansion Hub port 2
+        intakeMotor  = hwMap.get(DcMotorEx.class,"IntakeMotor");
         intakeMotor.setDirection( (isRobot2)? DcMotor.Direction.REVERSE :  DcMotor.Direction.FORWARD);
         intakeMotor.setPower( 0.0 );
         intakeMotor.setMode(DcMotor.RunMode.STOP_AND_RESET_ENCODER);
@@ -339,8 +379,7 @@ public class HardwareSwyftBot
         // Proportional (P) is increased to 200 as a result of the large shooter mass.
         // The feed-forward value of 12 is used to maintain speed control under
         // load (meaning when the ball enters the shooter and slows down the flywheel)
-//      PIDFCoefficients shooterPIDF = new PIDFCoefficients( 10.0, 3.0, 0.0, 12.0 );
-        PIDFCoefficients shooterPIDF = new PIDFCoefficients( 200.0, 3.0, 0.0, 0.0 );
+        PIDFCoefficients shooterPIDF = new PIDFCoefficients( 280.0, 0.0, 0.0, 16.0 );
         shooterMotor1.setPIDFCoefficients(DcMotor.RunMode.RUN_USING_ENCODER, shooterPIDF);
         shooterMotor2.setPIDFCoefficients(DcMotor.RunMode.RUN_USING_ENCODER, shooterPIDF);
 
@@ -350,24 +389,24 @@ public class HardwareSwyftBot
 
         //--------------------------------------------------------------------------------------------
         // Initialize the servos that rotate the turret
-        turretServo    = hwMap.servo.get("turretServo");            // servo port 2 (Control Hub)
-//      turretServoPos = hwMap.analogInput.get("turretServoPos");   // Analog port ? (Control Hub)
+        turretServo     = hwMap.servo.get("turretServo");            // servo port 2 (Control Hub)
+        turretServoPos1 = hwMap.tryGet(AnalogInput.class, "turretServoPos1");
+        turretServoPos2 = hwMap.tryGet(AnalogInput.class, "turretServoPos2");
 
         //--------------------------------------------------------------------------------------------
         // Initialize the servo on the spindexer
 //      if( isRobot2 ) spinServoCR = hwMap.tryGet(CRServo.class, "spinServo");
-        spinServo   = hwMap.tryGet(Servo.class, "spinServo");  // both ROBOT1 and ROBOT2 !!
-        spinServoPos = hwMap.analogInput.get("spinServoPos");       // Analog port 1 (Control Hub)
-
-        //--------------------------------------------------------------------------------------------
-        // Initialize the servos for the spindexer eyelids
-        rEyelidServo = hwMap.tryGet(Servo.class, "rEyelidServo");
-        lEyelidServo = hwMap.tryGet(Servo.class, "lEyelidServo");
+        spinServo   = hwMap.tryGet(Servo.class, "spinServo");
+        spinServoPos = hwMap.analogInput.get("spinServoPos");
 
         //--------------------------------------------------------------------------------------------
         // Initialize the servo for the injector/lifter
         liftServo    = hwMap.servo.get("liftServo");                // servo port 0 Expansion Hub)
         liftServoPos = hwMap.analogInput.get("liftServoPos");       // Analog port 1 (Control Hub)
+
+        //--------------------------------------------------------------------------------------------
+        // Initialize servo control of the goBilda LED
+        ledServo = hwMap.tryGet(Servo.class, "ledServo");
 
         // Ensure all servos are in the initialize position (YES for auto; NO for teleop)
         if( isAutonomous ) {
@@ -377,9 +416,10 @@ public class HardwareSwyftBot
     } /* init */
 
     /*--------------------------------------------------------------------------------------------*/
-    //BRODY!!
     // Resets odometry starting position and angle to zero accumulated encoder counts
     public void resetGlobalCoordinatePosition(){
+//      robot.odom.resetPosAndIMU();   // don't need full recalibration; just reset our position in case of any movement
+        setPinpointFieldPosition( 0.0, 0.0, 0.0 ); // in case we don't run autonomous first!
         robotGlobalXCoordinatePosition = 0.0;  // This will get overwritten the first time
         robotGlobalYCoordinatePosition = 0.0;  // we call robot.odom.update()!
         robotOrientationDegrees        = 0.0;
@@ -389,15 +429,11 @@ public class HardwareSwyftBot
     public void resetEncoders() throws InterruptedException {
         // Initialize the injector servo first! (so it's out of the way for spindexer rotation)
         liftServo.setPosition(LIFT_SERVO_INIT);
-        if( isRobot2 ) {
-            lEyelidServo.setPosition(L_EYELID_SERVO_INIT);
-            rEyelidServo.setPosition(R_EYELID_SERVO_INIT);
-        }
-        turretServo.setPosition(TURRET_SERVO_INIT);
+        turretServoSetPosition( TURRET_SERVO_INIT );
         shooterServo.setPosition(SHOOTER_SERVO_INIT);
         sleep(250);
         spinServoSetPosition(SpindexerState.SPIN_P3); // allows autonomous progression 3-2-1
-        // Also reset our odometry starting position
+        // Also initialize/calibrate the pinpoint odometry computer
         odom.resetPosAndIMU();
     } // resetEncoders
 
@@ -416,9 +452,9 @@ public class HardwareSwyftBot
                 isRobot2 = true;
             }
         } // imu_robot2
-        // Define and initialize REV Expansion Hub IMU                     ROBOT2 : ROBOT1
-        LogoFacingDirection logoDirection = (isRobot2)?  LogoFacingDirection.LEFT : LogoFacingDirection.RIGHT;
-        UsbFacingDirection  usbDirection = (isRobot2)? UsbFacingDirection.FORWARD : UsbFacingDirection.UP;
+        // Define and initialize REV Expansion Hub IMU (common for both ROBOT1 and ROBOT2)
+        LogoFacingDirection logoDirection = LogoFacingDirection.LEFT;
+        UsbFacingDirection  usbDirection  = UsbFacingDirection.FORWARD;
         RevHubOrientationOnRobot orientationOnRobot = new RevHubOrientationOnRobot(logoDirection, usbDirection);
         imu.initialize(new IMU.Parameters(orientationOnRobot));
     } // initIMU()
@@ -455,6 +491,26 @@ public class HardwareSwyftBot
         shooterMotor2.setPower( shooterPower );
     } // shooterMotorsSetPower
 
+    /*--------------------------------------------------------------------------------------------*/
+    public void limelightPipelineSwitch( int pipeline_number )
+    {
+        limelight.pipelineSwitch( pipeline_number );
+    } // limelightPipelineSwitch
+
+    /*--------------------------------------------------------------------------------------------*/
+    public void limelightStart()
+    {
+        // Start polling for data (skipping this has getLatestResult() return null results)
+        limelight.start();
+    } // limelightStart
+
+    /*--------------------------------------------------------------------------------------------*/
+    public void limelightStop()
+    {
+        // Start polling for data (skipping this has getLatestResult() return null results)
+        limelight.stop();
+    } // limelightStop
+
     //BRODY!!
     static double thetaMaxTurret = 375;
     static double thetaMinTurret = 0;
@@ -468,8 +524,7 @@ public class HardwareSwyftBot
     static double LAUNCH_EXIT_SPEED = 22;
     static double Z_BIN = 3.23;
     static double Z_SHOOTER = 0.5;  // get actual measurement
-//  static double TURRET_SERVO_RELATIVE_0_ANGLE = 180; // ROBOT1
-    static double TURRET_SERVO_RELATIVE_0_ANGLE = 0;   // ROBOT2
+    static double TURRET_SERVO_RELATIVE_0_ANGLE = 0;
     static double TURRET_SERVO_HORIZONTAL_POSITION = TURRET_SERVO_INIT; // position of turret servo when turret is aligned with the back of the robot
     static double TURRET_SERVO_HORIZONTAL_ANGLE_INIT = TURRET_SERVO_INIT*(thetaMaxTurret - thetaMinTurret);
     static double SHOOTER_SERVO_POS_VERTICAL = 0.64;
@@ -596,6 +651,196 @@ public class HardwareSwyftBot
         rearLeftMotor.setMode(   DcMotor.RunMode.RUN_TO_POSITION );
         rearRightMotor.setMode(  DcMotor.RunMode.RUN_TO_POSITION );
     } // setRunToPosition
+
+    /*--------------------------------------------------------------------------------------------*/
+    public void turretServoSetPosition( double targetPosition )
+    {
+        if( isRobot1 ) {
+            targetPosition += TURRET_R1_OFFSET;
+        }
+        turretServo.setPosition(targetPosition);
+    } // turretServoSetPosition
+
+    /*--------------------------------------------------------------------------------------------*/
+    // currently limited to +/- 90deg
+    public void setTurretAngle( double targetAngleDegrees )
+    {
+        // convert degrees into servo position setting centered around the init position.
+        double targetAngleCounts = -(targetAngleDegrees * TURRET_CTS_PER_DEG) + TURRET_SERVO_INIT;
+        // make sure it's within our safe range
+        if( targetAngleCounts < TURRET_SERVO_N90 ) targetAngleCounts = TURRET_SERVO_N90;
+        if( targetAngleCounts > TURRET_SERVO_MAX ) targetAngleCounts = TURRET_SERVO_MAX;
+        // set both turret servos (connected on Y cable)
+        turretServoSetPosition( targetAngleCounts );
+    } // setTurretAngle
+
+    /*--------------------------------------------------------------------------------------------*/
+    public double getTurretAngle( boolean analog1 )
+    {   // NOTE: the analog position feedback for the 5-turn AndyMark servos differs from Axon 3.3V
+        final double DEGREES_PER_ROTATION = 404.0;  // Five full rotations covers +/- 202 degrees
+        final double MAX_ANALOG_VOLTAGE   = 2.88;   // maximum analog feedback output (1.0)
+        final double MIN_ANALOG_VOLTAGE   = 0.46;   // minimum analog feedback output (0.0) 1.66V = 0.5
+        double measuredVoltage, scaledVoltage, measuredAngle;  // 0.267 = -90   0.667 = +90
+        // Which feedback does the user want?
+        if( analog1 ) {
+            measuredVoltage = (turretServoPos1 == null)? 0.0 : turretServoPos1.getVoltage();
+        } else {
+            measuredVoltage = (turretServoPos2 == null)? 0.0 : turretServoPos2.getVoltage();
+        }
+        // Convert min..max voltage into a 0..1 scale
+        scaledVoltage = (measuredVoltage - MIN_ANALOG_VOLTAGE)/(MAX_ANALOG_VOLTAGE - MIN_ANALOG_VOLTAGE);
+        // Ensure we remain within the 0.0 to 1.0 range
+        scaledVoltage = Math.max(0.0, Math.min(1.0, scaledVoltage));
+        // Invert, since voltage goes down as the 0...1 servo setting goes up
+        scaledVoltage = 1.0 - scaledVoltage;
+        // Convert from 0..1 servo setting to 0..360 angle
+        // TODO: fix this!  close but not quite right yet...
+        measuredAngle = scaledVoltage * DEGREES_PER_ROTATION;
+        // Shift from 0..360 to -180..+180
+        measuredAngle = measuredAngle - 180.0;
+        return measuredAngle;
+    } // getTurretAngle
+
+    /*--------------------------------------------------------------------------------------------*/
+    public void updatePinpointFieldPosition() {
+        // Request an update from the Pinpoint odometry computer (single I2C read)
+        odom.update();
+        // Parse for x/y/angle position data
+        Pose2D pos = odom.getPosition();  // x,y pos in inch; heading in degrees
+        robotGlobalXCoordinatePosition = pos.getX(DistanceUnit.INCH);
+        robotGlobalYCoordinatePosition = pos.getY(DistanceUnit.INCH);
+        robotOrientationDegrees        = pos.getHeading(AngleUnit.DEGREES);
+        // Parse for velocities (inches/sec, degrees/sec)
+        robotGlobalXvelocity = odom.getVelX(DistanceUnit.INCH);
+        robotGlobalYvelocity = odom.getVelY(DistanceUnit.INCH);
+        robotAngleVelocity   = odom.getHeadingVelocity(UnnormalizedAngleUnit.DEGREES);
+        // Currently unused:
+        // - Status         = odom.getDeviceStatus()
+        // - Reference Rate = odom.getFrequency()
+    } // updatePinpointFieldPosition
+
+    /*--------------------------------------------------------------------------------------------*/
+    public void setPinpointFieldPosition( double X, double Y, double headingDeg ) {
+        Pose2D newFieldPosition = new Pose2D(DistanceUnit.INCH, X, Y, AngleUnit.DEGREES, headingDeg );
+        odom.setPosition( newFieldPosition );
+        robotGlobalXCoordinatePosition = X;
+        robotGlobalYCoordinatePosition = Y;
+        robotOrientationDegrees        = headingDeg;
+    } // setPinpointFieldPosition
+
+    /*--------------------------------------------------------------------------------------------*/
+    public void updateLimelightFieldPosition() {
+        // To get the most accurate estimate of field position from the limelight (using the
+        // built-in field map and feedback from the Apriltags mounted on the red/blue goals)
+        // we tell the limelight the current robot/camera orientation angle.
+        double yawAngle = rotate180Yaw( robotOrientationDegrees );  // Rotate frame of reference!
+        limelight.updateRobotOrientation( yawAngle );   // takes effect on next cycle...
+        // Lets see if the limelight camera can see the Apriltag (to provide updated field location data)
+        LLResult llResult = limelight.getLatestResult();
+        if( llResult == null ) {
+            // Nothing to process this cycle
+            return;
+        }
+        if (llResultLast != null && (llResultLast == llResult) ) {
+            // Already processed that one
+            return;
+        }
+        if( !llResult.isValid() ) {
+            // Can't see the AprilTag from here (clear our results)
+            limelightFieldXpos     = 0;    limelightFieldXstd     = 0;
+            limelightFieldYpos     = 0;    limelightFieldYstd     = 0;
+            limelightFieldAngleDeg = 0;    limelightFieldAnglestd = 0;
+            return;
+        }
+        int STALENESS_LIMIT_MS = 30;
+        if( llResult.getStaleness() < STALENESS_LIMIT_MS ) {
+            llResultLast = llResult;
+            // Parse Limelight result for MegaTag2 robot pose data
+            Pose3D   limelightBotpose = llResult.getBotpose_MT2();
+            double[] stddev           = llResult.getStddevMt2();
+            if (limelightBotpose != null) {
+                // Obtain the X/Y position data
+                Position limelightPosition = limelightBotpose.getPosition();
+                // Translate X and Y into the odometry frame of reference
+                double posX = rotate180XY( limelightPosition.x );
+                double posY = rotate180XY( limelightPosition.y );
+                // update our global tracking variables
+                limelightFieldXpos = limelightPosition.unit.toInches(posX);
+                limelightFieldXstd = stddev[0];
+                limelightFieldYpos = limelightPosition.unit.toInches(posY);
+                limelightFieldYstd = stddev[1];
+                // Obtain the angle data
+                YawPitchRollAngles limelightOrientation = limelightBotpose.getOrientation();
+                limelightFieldAngleDeg = rotate180Yaw( limelightOrientation.getYaw(AngleUnit.DEGREES) );
+                limelightFieldAnglestd = stddev[5];
+            }
+        } else {  // limelight data is stale, don't trust it
+            limelightFieldXpos     = 0;    limelightFieldXstd     = 0;
+            limelightFieldYpos     = 0;    limelightFieldYstd     = 0;
+            limelightFieldAngleDeg = 0;    limelightFieldAnglestd = 0;
+        }
+    } // updateLimelightFieldPosition
+
+    /*--------------------------------------------------------------------------------------------*/
+    // The current pinpoint odometry is configured with a different +X/+Y/+angle than Limelight field
+    private static double rotate180Yaw(double yaw) {
+        if (!ROTATE_LIMELIGHT_FIELD_180) return yaw;
+        double rotated = yaw + 180;
+        double wrap = (rotated + 180) % 360;
+        double shift = wrap - 180;
+        return shift;
+    } // rotate180Yaw
+
+    private static double rotate180XY(double xy) {
+        return ((ROTATE_LIMELIGHT_FIELD_180)? -xy : xy);
+    } // rotate180XY
+
+    /*--------------------------------------------------------------------------------------------*/
+    public double getShootDistance(Alliance alliance) {
+        double currentX = robotGlobalXCoordinatePosition;
+        double currentY = robotGlobalYCoordinatePosition;
+        // Positions for targets based on values from ftc2025DECODE.fmap
+//      double targetX = 58.37;
+//      double targetY = (alliance == Alliance.BLUE)? +55.64 : -55.64;
+        double targetX = 60.0;
+        double targetY = (alliance == Alliance.BLUE)? +60.0 : -60.0;  // 6ft = 72"
+        // Compute distance to target point inside the goal
+        double deltaX = targetX - currentX;
+        double deltaY = targetY - currentY;
+        double distance = Math.sqrt( Math.pow(deltaX,2) + Math.pow(deltaY,2) );
+        return distance;
+    } // getShootDistance
+
+    /*--------------------------------------------------------------------------------------------*/
+    public double getShootAngleDeg(Alliance alliance) {
+        double currentX = robotGlobalXCoordinatePosition;
+        double currentY = robotGlobalYCoordinatePosition;
+        // Rotated field positions for targets based on values from ftc2025DECODE.fmap
+//      double targetX = 58.37;
+//      double targetY = (alliance == Alliance.BLUE)? +55.64 : -55.64;
+        double targetX = 60.0;
+        double targetY = (alliance == Alliance.BLUE)? +60.0 : -60.0;  // 6ft = 72"
+        // Compute distance to target point inside the goal
+        double deltaX = targetX - currentX;
+        double deltaY = targetY - currentY;
+        // Compute the angle assuming the robot is facing forward at 0 degrees
+        double targetFromStraight = Math.toDegrees( Math.atan2(deltaY,deltaX) );
+        // Adjust for the current robot orientation
+        double shootAngle = targetFromStraight - robotOrientationDegrees;
+        return shootAngle;
+    } // getShootAngleDeg
+
+    static double calcShootAngleDeg(Alliance alliance, double robotX, double robotY, double heading) {
+        // Rotated field ositions for targets based on values from ftc2025DECODE.fmap
+        double targetX = 58.37;
+        double targetY = alliance == Alliance.BLUE ? +55.64 : -55.64;
+        return calcAngleDegToTarget(targetX, targetY, robotX, robotY, heading);
+    }
+
+    static double calcAngleDegToTarget(double targetX, double targetY, double robotX, double robotY, double robotHeading) {
+        double targetFromStraight = Math.toDegrees(Math.atan2(targetY - robotY, targetX - robotX));
+        return targetFromStraight - robotHeading;
+    }
 
     /*--------------------------------------------------------------------------------------------*/
     public double computeAxonAngle( double measuredVoltage )
@@ -783,39 +1028,6 @@ public class HardwareSwyftBot
        liftServoTimer.reset();
        liftServoBusyD = true;        
     } // abortInjectionStateMachine
-
-    /*--------------------------------------------------------------------------------------------*/
-    public void eyelidServoSetPosition( EyelidState position )
-    {
-        // eventually use the rEyelidServoTimer and rEyelidServoBusyU to time the movement
-        // so software protections can be put in place regard operation in a "bad state"
-        
-        switch( position ) {
-            case EYELID_OPEN_BOTH :
-               rEyelidServo.setPosition( R_EYELID_SERVO_UP );
-               lEyelidServo.setPosition( L_EYELID_SERVO_UP );
-               break;
-            case EYELID_OPEN_R :
-               rEyelidServo.setPosition( R_EYELID_SERVO_UP );
-               break;
-            case EYELID_OPEN_L :
-               lEyelidServo.setPosition( L_EYELID_SERVO_UP );
-               break;
-            case EYELID_CLOSED_BOTH :
-               rEyelidServo.setPosition( R_EYELID_SERVO_DOWN );
-               lEyelidServo.setPosition( L_EYELID_SERVO_DOWN );
-               break;
-            case EYELID_CLOSED_R :
-               rEyelidServo.setPosition( R_EYELID_SERVO_DOWN );
-               break;
-            case EYELID_CLOSED_L :
-               lEyelidServo.setPosition( L_EYELID_SERVO_DOWN );
-               break;
-            default :
-               break;
-        } // switch()
-
-    } // eyelidServoSetPosition
         
     /*--------------------------------------------------------------------------------------------*/
 

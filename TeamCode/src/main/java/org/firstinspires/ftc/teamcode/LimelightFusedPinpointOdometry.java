@@ -1,7 +1,6 @@
 package org.firstinspires.ftc.teamcode;
 
 import com.qualcomm.hardware.limelightvision.LLResult;
-import com.qualcomm.hardware.limelightvision.LLResultTypes;
 import com.qualcomm.hardware.limelightvision.Limelight3A;
 
 import org.firstinspires.ftc.robotcore.external.Telemetry;
@@ -12,10 +11,8 @@ import org.firstinspires.ftc.robotcore.external.navigation.Pose3D;
 import org.firstinspires.ftc.robotcore.external.navigation.Position;
 import org.firstinspires.ftc.robotcore.external.navigation.YawPitchRollAngles;
 
-import java.util.List;
-
 /**
- * Class that uses a Limelight localization pipeline to keep the pinpoint odometry location accurate.
+ * Support class that uses a Limelight localization pipeline to keep the pinpoint odometry location accurate.
  */
 public class LimelightFusedPinpointOdometry {
     /**
@@ -32,49 +29,33 @@ public class LimelightFusedPinpointOdometry {
     private final double robotStartingYawDegrees;
     private Alliance alliance;
 
-    private LLResult lastUsedResult;
+    private LLResult llResultLast;
 
     public LimelightFusedPinpointOdometry(Limelight3A limelight, GoBildaPinpointDriver odom, Telemetry telemetry, double robotStartingYawDegrees) {
         assert limelight != null;
         assert odom != null;
         assert telemetry != null;
+        assert limelight.isRunning();
         this.limelight = limelight;
         this.odom = odom;
         this.telemetry = telemetry;
         this.robotStartingYawDegrees = robotStartingYawDegrees;
+        // limelight.setPollRateHz(100); // default is every 10ms
+        limelight.updateRobotOrientation(rotate180Yaw(robotStartingYawDegrees));
     }
 
-    public void startPipeline(Alliance alliance) {
+    public void updatePipeline(Alliance alliance) {
         assert alliance != null;
-        int allianceLocalizationPipeline = alliance == Alliance.BLUE ? 6 : 7;
+        this.alliance = alliance;
+        // limelight pipelines 6 & 7 filter for the BLUE and RED goal apriltags
+        int allianceLocalizationPipeline = (alliance == Alliance.BLUE)? 6:7;
         boolean result = limelight.pipelineSwitch(allianceLocalizationPipeline);
         assert result;
-        // limelight.setPollRateHz(100); // default is every 10ms
-        limelight.start();
-        limelight.updateRobotOrientation(rotate180Yaw(robotStartingYawDegrees));
+        if(!limelight.isRunning()) limelight.start(); // restart if paused/stopped.
     }
 
     public void stop() {
         limelight.stop();
-    }
-
-    /**
-     * Using the latest limelight data, (which may not have targeting info if the camera isn't facing the target) return details for where to shoot for the configured alliance.
-     *
-     * @return FiducialResult for target which includes targetXDegrees for aiming and targetYDegrees for adjusting motor speed.
-     */
-    public LLResultTypes.FiducialResult getShootTarget() {
-        LLResult llResult = limelight.getLatestResult();
-        if (llResult != null && llResult.isValid()) {
-            int targetApriltag = alliance == Alliance.BLUE ? 20 : 24;
-            List<LLResultTypes.FiducialResult> fiducialResults = llResult.getFiducialResults();
-            for (LLResultTypes.FiducialResult fr : fiducialResults) {
-                if (fr.getFiducialId() == targetApriltag) {
-                    return fr;
-                }
-            }
-        }
-        return null;
     }
 
     /**
@@ -93,12 +74,12 @@ public class LimelightFusedPinpointOdometry {
 
         // Check Limelight for Apriltag-based field location data
         LLResult llResult = limelight.getLatestResult();
-        if (lastUsedResult != null && lastUsedResult == llResult) {
+        if (llResultLast != null && llResultLast == llResult) {
             // Already processed.
             return;
         }
         if (llResult != null && llResult.isValid() && llResult.getStaleness() < STALENESS_LIMIT_MS) {
-            lastUsedResult = llResult;
+            llResultLast = llResult;
             telemetry.addData("Limelight Latency (msec)", llResult.getCaptureLatency() + llResult.getTargetingLatency());
             telemetry.addData("Parse Latency (msec)", llResult.getParseLatency());
             // Parse Limelight result for MegaTag2 robot pose data
@@ -139,4 +120,4 @@ public class LimelightFusedPinpointOdometry {
         double shift = wrap - 180;
         return shift;
     }
-}
+} // LimelightFusedPinpointOdometry

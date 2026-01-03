@@ -2,14 +2,7 @@
  */
 package org.firstinspires.ftc.teamcode;
 
-import static org.firstinspires.ftc.teamcode.HardwareSwyftBot.EyelidState.EYELID_CLOSED_BOTH;
-
-import com.qualcomm.hardware.limelightvision.LLResult;
-import com.qualcomm.hardware.limelightvision.LLResultTypes;
-import com.qualcomm.hardware.limelightvision.Limelight3A;
 import com.qualcomm.robotcore.eventloop.opmode.Autonomous;
-
-import java.util.List;
 
 /**
  */
@@ -33,10 +26,8 @@ public class AutonomousRedFar extends AutonomousBase {
         robot.init(hardwareMap,true);
         redAlliance  = true;
 
-        // NOTE: Control Hub is assigned eth0 address 172.29.0.1 by limelight DHCP server
-        limelight = hardwareMap.get(Limelight3A.class, "limelight");
-        limelight.pipelineSwitch(1);
-        limelight.start();  // Start polling for data (skipping this has getLatestResult() return null results)
+        robot.limelightPipelineSwitch( 1 );
+        robot.limelightStart();  // Start polling for data (skipping this has getLatestResult() return null results)
 
         // Wait for the game to start (driver presses PLAY).  While waiting, poll for options
         while (!isStarted()) {
@@ -48,12 +39,9 @@ public class AutonomousRedFar extends AutonomousBase {
             idle();
         } // !isStarted
 
-        limelight.stop();
+        robot.limelightStop();
         resetGlobalCoordinatePosition();
         scoringZones = 0;
-
-        // If nobody pressed X during setup, ensure eyelids are closed.
-        robot.eyelidServoSetPosition( EYELID_CLOSED_BOTH );
 
         // Start the autonomous timer so we know how much time is remaining when cycling samples
         autonomousTimer.reset();
@@ -140,12 +128,13 @@ public class AutonomousRedFar extends AutonomousBase {
         //===== Score Preload Balls (from the FAR zone) ==========
         // Immediately start up shooter so it can be getting up to speed
         robot.shooterMotorsSetPower( shooterPowerFar );
+        robot.intakeMotor.setPower(0.90);
         // Drive out away from wall, both to allow us to rotate the turret and not have the
         // shooter drive belt touch the field wall, but also to be closer to the goal.
         // Must not go so far we are no longer within the scoring zone!
         driveToPosition( 11.0, 0.0, 0.0, DRIVE_SPEED_40, TURN_SPEED_15, DRIVE_TO);
         // Swivel the turret toward the RED or BLUE goal (assumes field location of 11.0/0.0/0deg
-        robot.turretServo.setPosition( (redAlliance)? 0.545 : 0.435 ); // right toward RED or left toward BLUE
+        robot.turretServoSetPosition( (redAlliance)? 0.545 : 0.435 ); // right toward RED or left toward BLUE
         sleep( 1500 ); // Must cover both shooter spin up and turret rotation
         scoreThreeBallsFromFar( obeliskID );
 
