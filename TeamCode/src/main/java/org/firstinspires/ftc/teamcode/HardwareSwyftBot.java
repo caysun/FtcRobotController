@@ -148,6 +148,11 @@ public class HardwareSwyftBot
     public AnalogInput turretServoPos1 = null;
     public AnalogInput turretServoPos2 = null;
 
+    public double     turretServoSet    = 0.0;  // 5-turn servo commanded setpoint
+    public double     turretServoGet    = 0.0;  // 5-turn servo queried setpoint
+    public double     turretServoPos    = 0.0;  // 5-turn servo position (analog feedback)
+    public boolean    turretServoIsBusy = false; // are we still moving toward position?
+
     // NOTE: Although the turret can spin to +180deg, the cable blocks the shooter hood exit
     // once you reach +55deg, so that's our effect MAX turret angle on the right side.
     public final static double TURRET_SERVO_MAX2 = 0.93; // +180 deg (turret max)
@@ -158,7 +163,8 @@ public class HardwareSwyftBot
     public final static double TURRET_SERVO_MIN  = 0.06; // -180deg
     public final static double TURRET_CTS_PER_DEG = (TURRET_SERVO_P90 - TURRET_SERVO_N90)/180.0;
 
-    public final static double TURRET_R1_OFFSET = -0.008; // ROBOT1 differs from our reference (ROBOT2)
+    public final static double TURRET_R1_OFFSET = -0.008; // ROBOT1 offset to align with reference
+    public final static double TURRET_R2_OFFSET =  0.000; // ROBOT2 offset to align with reference
 
     //====== SPINDEXER SERVO =====
     public Servo       spinServo    = null;
@@ -211,7 +217,11 @@ public class HardwareSwyftBot
         SPIN_DECREMENT
     }
     
-    public SpindexerState spinServoCurPos = SpindexerState.SPIN_P2;
+    public SpindexerState spinServoCurPos = SpindexerState.SPIN_P2;  // commanded spindexer enum
+    public double         spinServoSetPos = 0.0;  // commanded spindexer position
+    public boolean        spinServoInPos  = true; // have we reached the commanded position
+    public ElapsedTime    spinServoTimer  = new ElapsedTime();
+    public double         spinServoTime   = 0.0;  // msec to get into position
 
     //====== INJECTOR/LIFTER SERVO =====
     public Servo       liftServo      = null;
@@ -228,12 +238,12 @@ public class HardwareSwyftBot
     public final static double LIFT_SERVO_RESET_ANG_R1  = 178.3;  // 0.520 = 173.3deg
     public final static double LIFT_SERVO_INJECT_ANG_R1 = 230.2;  // 0.330 = 235.2deg
     //===== ROBOT2 injector/lift servo positions:
-    public final static double LIFT_SERVO_INIT_R2   = 0.500;
-    public final static double LIFT_SERVO_RESET_R2  = 0.500;
-    public final static double LIFT_SERVO_INJECT_R2 = 0.310;
-      //   179 (184)  . . .    (236)  241           <-- 5deg tolerance on RESET and INJECT
-    public final static double LIFT_SERVO_RESET_ANG_R2  = 184.0;  // 0.500 = 179.5deg
-    public final static double LIFT_SERVO_INJECT_ANG_R2 = 236.0;  // 0.310 = 241.7deg
+    public final static double LIFT_SERVO_INIT_R2   = 0.510;
+    public final static double LIFT_SERVO_RESET_R2  = 0.510;
+    public final static double LIFT_SERVO_INJECT_R2 = 0.320;
+      //   176.95 (181)  . . .    (234)  238.7           <-- 5deg tolerance on RESET and INJECT
+    public final static double LIFT_SERVO_RESET_ANG_R2  = 181.0;  // 0.510 = 176.95deg
+    public final static double LIFT_SERVO_INJECT_ANG_R2 = 234.0;  // 0.320 = 238.7deg
     //===== These get populated after IMU init, when we know if we're ROBOT1 or ROBOT2
     public double LIFT_SERVO_INIT;
     public double LIFT_SERVO_RESET;
@@ -478,9 +488,19 @@ public class HardwareSwyftBot
         //   getPower() / getVelocity() / getCurrent()
         shooterMotor1Vel = shooterMotor1.getVelocity();
         shooterMotor2Vel = shooterMotor2.getVelocity();
+        // Where has the turret been commanded to?
+        turretServoGet   = turretServo.getPosition();
+        // Where is the turret currently located?  (average the two feedback values)
+        turretServoPos   = (getTurretPosition(true) + getTurretPosition(false))/2.0;
         // NOTE: motor mA data is NOT part of the bulk-read, so increases cycle time!
 //      shooterMotor1Amps = shooterMotor1.getCurrent(MILLIAMPS);
 //      shooterMotor2Amps = shooterMotor1.getCurrent(MILLIAMPS);
+        // Has the spindexer reached the commanded position?
+        double spindexerError = Math.abs( spinServoSetPos - getSpindexerPos() );
+        if( !spinServoInPos && (spindexerError < 0.030) ) {
+            spinServoTime = spinServoTimer.milliseconds();
+            spinServoInPos = true;
+        }
     } // readBulkData
 
     /*--------------------------------------------------------------------------------------------*/
@@ -516,18 +536,13 @@ public class HardwareSwyftBot
     static double thetaMinTurret = 0;
     static double thetaMaxFlapper = 355;
     static double thetaMinFlapper = 0;
-    static double STARTING_HEADING = 90;
-    static double TEST_LAUNCH_X = 6;
-    static double TEST_LAUNCH_Y = 2;
     static double X_BIN_L = 0.6667; // in feet
     static double Y_BIN_L = 12;   // in feet
     static double LAUNCH_EXIT_SPEED = 22;
     static double Z_BIN = 3.23;
     static double Z_SHOOTER = 0.5;  // get actual measurement
     static double TURRET_SERVO_RELATIVE_0_ANGLE = 0;
-    static double TURRET_SERVO_HORIZONTAL_POSITION = TURRET_SERVO_INIT; // position of turret servo when turret is aligned with the back of the robot
     static double TURRET_SERVO_HORIZONTAL_ANGLE_INIT = TURRET_SERVO_INIT*(thetaMaxTurret - thetaMinTurret);
-    static double SHOOTER_SERVO_POS_VERTICAL = 0.64;
 
     static double SHOOTER_SERVO_HORIZONTAL_POSITION = 0.39;
     public double computeAlignedTurretPos() {
@@ -658,7 +673,15 @@ public class HardwareSwyftBot
         if( isRobot1 ) {
             targetPosition += TURRET_R1_OFFSET;
         }
+        if( isRobot2 ) {
+            targetPosition += TURRET_R2_OFFSET;
+        }
         turretServo.setPosition(targetPosition);
+        
+        // Store this setting so we can track progress of the turret motion
+        turretServoSet    = targetPosition;
+        turretServoIsBusy = true;  // TODO: need performEveryLoop logic to clear/timeout!
+        
     } // turretServoSetPosition
 
     /*--------------------------------------------------------------------------------------------*/
@@ -675,12 +698,16 @@ public class HardwareSwyftBot
     } // setTurretAngle
 
     /*--------------------------------------------------------------------------------------------*/
-    public double getTurretAngle( boolean analog1 )
+    // Due to the complexity of 5-turn servos and two robots (4 total position sensors) we don't  
+    // attempt to convert the servo position from a 0..1 value to an actual 0..360deg value.  All
+    // we need to know is that whatever position commanded (0..1) has been achieved according to
+    // the analog feedback, and we can do that in the 0..1 domain
+    // INPUT:  analog1?  (do we want to know the current feedback based on servo1 or servo2 sensor?
+    public double getTurretPosition( boolean analog1 )
     {   // NOTE: the analog position feedback for the 5-turn AndyMark servos differs from Axon 3.3V
-        final double DEGREES_PER_ROTATION = 404.0;  // Five full rotations covers +/- 202 degrees
-        final double MAX_ANALOG_VOLTAGE   = 2.88;   // maximum analog feedback output (1.0)
-        final double MIN_ANALOG_VOLTAGE   = 0.46;   // minimum analog feedback output (0.0) 1.66V = 0.5
-        double measuredVoltage, scaledVoltage, measuredAngle;  // 0.267 = -90   0.667 = +90
+        final double MAX_ANALOG_VOLTAGE   = 2.88; // Volts: maximum analog feedback (for 1.0)
+        final double MIN_ANALOG_VOLTAGE   = 0.46; // Volts: minimum analog feedback (for 0.0) 1.66V = 0.5
+        double measuredVoltage, scaledVoltage, positionFeedback;  // NOTE: 0.267 = -90   0.667 = +90
         // Which feedback does the user want?
         if( analog1 ) {
             measuredVoltage = (turretServoPos1 == null)? 0.0 : turretServoPos1.getVoltage();
@@ -691,15 +718,10 @@ public class HardwareSwyftBot
         scaledVoltage = (measuredVoltage - MIN_ANALOG_VOLTAGE)/(MAX_ANALOG_VOLTAGE - MIN_ANALOG_VOLTAGE);
         // Ensure we remain within the 0.0 to 1.0 range
         scaledVoltage = Math.max(0.0, Math.min(1.0, scaledVoltage));
-        // Invert, since voltage goes down as the 0...1 servo setting goes up
-        scaledVoltage = 1.0 - scaledVoltage;
-        // Convert from 0..1 servo setting to 0..360 angle
-        // TODO: fix this!  close but not quite right yet...
-        measuredAngle = scaledVoltage * DEGREES_PER_ROTATION;
-        // Shift from 0..360 to -180..+180
-        measuredAngle = measuredAngle - 180.0;
-        return measuredAngle;
-    } // getTurretAngle
+        // Invert, since voltage goes down as the 0...1 servo position setting goes up
+        positionFeedback = 1.0 - scaledVoltage;
+        return positionFeedback;
+    } // getTurretPosition
 
     /*--------------------------------------------------------------------------------------------*/
     public void updatePinpointFieldPosition() {
@@ -800,8 +822,6 @@ public class HardwareSwyftBot
         double currentX = robotGlobalXCoordinatePosition;
         double currentY = robotGlobalYCoordinatePosition;
         // Positions for targets based on values from ftc2025DECODE.fmap
-//      double targetX = 58.37;
-//      double targetY = (alliance == Alliance.BLUE)? +55.64 : -55.64;
         double targetX = 60.0;
         double targetY = (alliance == Alliance.BLUE)? +60.0 : -60.0;  // 6ft = 72"
         // Compute distance to target point inside the goal
@@ -812,14 +832,22 @@ public class HardwareSwyftBot
     } // getShootDistance
 
     /*--------------------------------------------------------------------------------------------*/
+    public static double computeShooterPower(double distance) {
+        double x = distance;
+        // .051 + (-2.53E-03)x + 3.9E-05x^2 + -1.21E-07x^3
+        double shooterPower = 0.51 + -2.53E-3 * x + 3.9E-5 * Math.pow(x,2) + -1.21E-7 * Math.pow(x,3);
+        shooterPower = Math.max(shooterPower, 0.45); // Ensure min power.
+        shooterPower = Math.min(shooterPower, 0.59); // Ensure max power.
+        return shooterPower;
+    } // getShootPower
+
+    /*--------------------------------------------------------------------------------------------*/
     public double getShootAngleDeg(Alliance alliance) {
         double currentX = robotGlobalXCoordinatePosition;
         double currentY = robotGlobalYCoordinatePosition;
         // Rotated field positions for targets based on values from ftc2025DECODE.fmap
-//      double targetX = 58.37;
-//      double targetY = (alliance == Alliance.BLUE)? +55.64 : -55.64;
         double targetX = 60.0;
-        double targetY = (alliance == Alliance.BLUE)? +60.0 : -60.0;  // 6ft = 72"
+        double targetY = (alliance == Alliance.BLUE)? +57 : -58;  // 6ft = 72"
         // Compute distance to target point inside the goal
         double deltaX = targetX - currentX;
         double deltaY = targetY - currentY;
@@ -830,17 +858,13 @@ public class HardwareSwyftBot
         return shootAngle;
     } // getShootAngleDeg
 
-    static double calcShootAngleDeg(Alliance alliance, double robotX, double robotY, double heading) {
-        // Rotated field ositions for targets based on values from ftc2025DECODE.fmap
-        double targetX = 58.37;
-        double targetY = alliance == Alliance.BLUE ? +55.64 : -55.64;
-        return calcAngleDegToTarget(targetX, targetY, robotX, robotY, heading);
-    }
-
-    static double calcAngleDegToTarget(double targetX, double targetY, double robotX, double robotY, double robotHeading) {
-        double targetFromStraight = Math.toDegrees(Math.atan2(targetY - robotY, targetX - robotX));
-        return targetFromStraight - robotHeading;
-    }
+    /*--------------------------------------------------------------------------------------------*/
+    public double computeAxonPos( double measuredVoltage )
+    {
+        final double MAX_ANALOG_VOLTAGE   = 3.3;    // 3.3V maximum analog feedback output
+        double measuredPos = (measuredVoltage / MAX_ANALOG_VOLTAGE);
+        return measuredPos;
+    } // computeAxonPos
 
     /*--------------------------------------------------------------------------------------------*/
     public double computeAxonAngle( double measuredVoltage )
@@ -854,7 +878,13 @@ public class HardwareSwyftBot
         while( measuredAngle > 360.0 ) measuredAngle -= 360.0;
         return measuredAngle;
     } // computeAxonAngle
-    
+
+    /*--------------------------------------------------------------------------------------------*/
+    public double getSpindexerPos()
+    {
+        return computeAxonPos( spinServoPos.getVoltage() );
+    } // getSpindexerAngle
+
     /*--------------------------------------------------------------------------------------------*/
     public double getSpindexerAngle()
     {
@@ -910,38 +940,52 @@ public class HardwareSwyftBot
     public void spinServoSetPosition( SpindexerState position )
     {
         switch( position ) {
-            case SPIN_P1 : spinServo.setPosition(SPIN_SERVO_P1);
+            case SPIN_P1 :
                 spinServoCurPos = SpindexerState.SPIN_P1;
+                spinServoSetPos = SPIN_SERVO_P1;
+                spinServo.setPosition(spinServoSetPos);
                 break;
-            case SPIN_P2 : spinServo.setPosition(SPIN_SERVO_P2);
+            case SPIN_P2 :
                 spinServoCurPos = SpindexerState.SPIN_P2;
+                spinServoSetPos = SPIN_SERVO_P2;
+                spinServo.setPosition(spinServoSetPos);
                 break;
-            case SPIN_P3 : spinServo.setPosition(SPIN_SERVO_P3);
+            case SPIN_P3 :
                 spinServoCurPos = SpindexerState.SPIN_P3;
+                spinServoSetPos = SPIN_SERVO_P3;
+                spinServo.setPosition(spinServoSetPos);
                 break;
             case SPIN_INCREMENT :
                 if( spinServoCurPos == SpindexerState.SPIN_P1 ) {
-                    spinServo.setPosition(SPIN_SERVO_P2);
                     spinServoCurPos = SpindexerState.SPIN_P2;
+                    spinServoSetPos = SPIN_SERVO_P2;
+                    spinServo.setPosition(spinServoSetPos);
                 }
                 else if( spinServoCurPos == SpindexerState.SPIN_P2 ) {
-                    spinServo.setPosition(SPIN_SERVO_P3);
                     spinServoCurPos = SpindexerState.SPIN_P3;
+                    spinServoSetPos = SPIN_SERVO_P3;
+                    spinServo.setPosition(spinServoSetPos);
                 } // else no room to increment further!
                 break;
             case SPIN_DECREMENT :
                 if( spinServoCurPos == SpindexerState.SPIN_P3 ) {
-                    spinServo.setPosition(SPIN_SERVO_P2);
                     spinServoCurPos = SpindexerState.SPIN_P2;
+                    spinServoSetPos = SPIN_SERVO_P2;
+                    spinServo.setPosition(spinServoSetPos);
                 }
                 else if( spinServoCurPos == SpindexerState.SPIN_P2 ) {
-                    spinServo.setPosition(SPIN_SERVO_P1);
                     spinServoCurPos = SpindexerState.SPIN_P1;
+                    spinServoSetPos = SPIN_SERVO_P1;
+                    spinServo.setPosition(spinServoSetPos);
                 } // else no room to increment further!
                 break;
             default:
                 break;
         } // switch()
+
+        // reset our flag and start a timer
+        spinServoInPos = false;
+        spinServoTimer.reset();
     } // spinServoSetPosition
 
     /*--------------------------------------------------------------------------------------------*/
@@ -987,11 +1031,7 @@ public class HardwareSwyftBot
         // Process the LIFTING case (AxonMax+ no-load 60deg rotation = 115 msec
         if( liftServoBusyU ) {
             // Are we "done" because the servo position is now close enough? (Axon position feedback)
-            if (isRobot1) {
-                servoFullyInjected = false;
-            } else { // robot2 has Axon position feedback wired up
-                servoFullyInjected = (getInjectorAngle() >= LIFT_SERVO_INJECT_ANG);
-            }
+            servoFullyInjected = (getInjectorAngle() >= LIFT_SERVO_INJECT_ANG);
             servoTimeoutU = (liftServoTimer.milliseconds() > 750);
             // Has the injector servo reached the desired position? (or timed-out?)
             if( servoFullyInjected || servoTimeoutU ) {

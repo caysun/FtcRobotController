@@ -1,10 +1,9 @@
 package org.firstinspires.ftc.teamcode;
 
-import static org.firstinspires.ftc.teamcode.HardwareSwyftBot.SpindexerState.SPIN_DECREMENT;
+import static org.firstinspires.ftc.teamcode.BallOrder.PPG_23;
 import static org.firstinspires.ftc.teamcode.HardwareSwyftBot.SpindexerState.SPIN_P1;
 import static org.firstinspires.ftc.teamcode.HardwareSwyftBot.SpindexerState.SPIN_P2;
 import static org.firstinspires.ftc.teamcode.HardwareSwyftBot.SpindexerState.SPIN_P3;
-import static java.lang.Math.abs;
 import static java.lang.Math.toRadians;
 
 import android.os.Environment;
@@ -20,6 +19,7 @@ import com.qualcomm.robotcore.util.Range;
 import org.firstinspires.ftc.robotcore.external.navigation.AngleUnit;
 import org.firstinspires.ftc.robotcore.external.navigation.DistanceUnit;
 import org.firstinspires.ftc.robotcore.external.navigation.Pose2D;
+import org.firstinspires.ftc.teamcode.HardwareSwyftBot.SpindexerState;
 
 import java.io.File;
 import java.text.SimpleDateFormat;
@@ -37,6 +37,7 @@ public abstract class AutonomousBase extends LinearOpMode {
     static final double  HEADING_THRESHOLD    = 2.0;     // Minimum of 1 degree for an integer gyro
     static final double  P_TURN_COEFF         = 0.050;   // Larger is more responsive, but also less stable
     static final double  DRIVE_SPEED_10       = 0.10;    // 
+    static final double  DRIVE_SPEED_15       = 0.15;    //
     static final double  DRIVE_SPEED_20       = 0.20;    // Lower speed for moving from a standstill
     static final double  DRIVE_SPEED_30       = 0.30;    // Lower speed for fine control going sideways
     static final double  DRIVE_SPEED_40       = 0.40;    // Normally go slower to achieve better accuracy
@@ -67,7 +68,7 @@ public abstract class AutonomousBase extends LinearOpMode {
     static final double FIRST_SPIKE_MARK_RED_POS_X = 0.0; // TODO: Find real position
     static final double FIRST_SPIKE_MARK_RED_POS_Y = 0.0; // TODO: Find real position
 
-    public int         obeliskID=23; // if we can't see it, default to PPG (purple purple green)
+    public BallOrder obeliskID = PPG_23; // if we can't see it, default to PPG (purple purple green)
 
     // NOTE: Initializing the odometry global X-Y and ANGLE to 0-0 and 0deg means the frame of reference for all movements is
     // the starting positiong/orientation of the robot.  An alternative is to make the bottom-left corner of the field the 0-0
@@ -298,7 +299,7 @@ public abstract class AutonomousBase extends LinearOpMode {
                 //  23 = PPG (purple purple green)
                 if( (limelightID >= 21) && (limelightID <= 23) ) {
                     telemetry.addData("Obelisk", "ID: %d", limelightID);
-                    obeliskID = limelightID;
+                    obeliskID = BallOrder.forObeliskID(limelightID);
                 }
             } // fiducialResults
         } // isValid
@@ -1170,13 +1171,13 @@ protected boolean driveToXY(double xTarget, double yTarget, double angleTarget, 
         double x1=16.0, x2=21.0, x3=24.0;  // UNIQUE TO SPIKE1
         double xPos, yPos, angDeg;
         // Reset the spindexer for collecting GPP
-        robot.spinServoSetPosition( SPIN_P2 );   // GPP goes into P3, P2, P1 (shooter position; not collect position)
+        robot.spinServoSetPosition( SPIN_P1 );   // we collect in P1, P2, P3 order
         // Transition from shooting zone to spike-mark zone (spikemark #1)
         if( opModeIsActive() ) {
             // drive away from the far shooting zone in a curved path toward the 1st spike mark
-            driveToPosition( x1, ((isRed)? -1.0:1.0), ((isRed)? -22.5:22.5), DRIVE_SPEED_50, TURN_SPEED_30, DRIVE_THRU);
-            driveToPosition( x2, ((isRed)? -3.0:3.0), ((isRed)? -45.0:45.0), DRIVE_SPEED_80, TURN_SPEED_30, DRIVE_THRU);
-            driveToPosition( x3, ((isRed)? -7.0:7.0), ((isRed)? -70.0:70.0), DRIVE_SPEED_80, TURN_SPEED_30, DRIVE_THRU);
+            driveToPosition( x1, ((isRed)? -1.0:1.0), ((isRed)? -22.5:22.5), DRIVE_SPEED_90, TURN_SPEED_30, DRIVE_THRU);
+            driveToPosition( x2, ((isRed)? -3.0:3.0), ((isRed)? -45.0:45.0), DRIVE_SPEED_90, TURN_SPEED_30, DRIVE_THRU);
+            driveToPosition( x3, ((isRed)? -7.0:7.0), ((isRed)? -70.0:70.0), DRIVE_SPEED_90, TURN_SPEED_30, DRIVE_THRU);
         }
         // Collect the 3 balls at that spike mark
         if( opModeIsActive() ) {
@@ -1186,32 +1187,27 @@ protected boolean driveToXY(double xTarget, double yTarget, double angleTarget, 
             xPos   = (isRed)? 25.0 : 30.5;  // UNIQUE TO SPIKE1
             yPos   = (isRed)? -12.6 : +12.6;
             angDeg = (isRed)? -90.0 : +90.0;
-            driveToPosition( xPos, yPos, angDeg, DRIVE_SPEED_20, TURN_SPEED_30, DRIVE_THRU);
+            driveToPosition( xPos, yPos, angDeg, DRIVE_SPEED_40, TURN_SPEED_30, DRIVE_THRU);
             // Drive into the 1st ball to collect it
-            yPos   = (isRed)? -19.5 : +19.5;
-            driveToPosition( xPos, yPos, angDeg, DRIVE_SPEED_20, TURN_SPEED_30, DRIVE_TO);
-            sleep(250);  // let it fully collect
-            robot.spinServoSetPosition( SPIN_P1 );
-            sleep(750);  // wait for spindex
+            yPos   = (isRed)? -22.0 : +22.0;
+            driveToPosition( xPos, yPos, angDeg, DRIVE_SPEED_15, TURN_SPEED_15, DRIVE_THRU);
+            robot.spinServoSetPosition( SPIN_P2 );
             // Drive into the 2nd ball to collect it
-            yPos   = (isRed)? -24.9 : +24.9;
-            driveToPosition( xPos, yPos, angDeg, DRIVE_SPEED_20, TURN_SPEED_30, DRIVE_TO);
-            sleep(250);  // let it fully collect
+            yPos   = (isRed)? -28.0 : +28.0;
+            driveToPosition( xPos, yPos, angDeg, DRIVE_SPEED_15, TURN_SPEED_15, DRIVE_THRU);
             robot.spinServoSetPosition( SPIN_P3 );
-            sleep(750);  // wait for spindex
             // Drive into the 3rd ball to collect it
-            yPos   = (isRed)? -30.2 : +30.2;
-            driveToPosition( xPos, yPos, angDeg, DRIVE_SPEED_20, TURN_SPEED_30, DRIVE_TO);
-            sleep(250);  // let it fully collect
+            yPos   = (isRed)? -33.0 : +33.0;
+            driveToPosition( xPos, yPos, angDeg, DRIVE_SPEED_15, TURN_SPEED_15, DRIVE_TO);
         } // opModeIsActive
         // Drive back to the shooting zone (back the way we came!)
         if( opModeIsActive() ) {
-            driveToPosition( x3, ((isRed)? -7.0:7.0), ((isRed)? -70.0:70.0), DRIVE_SPEED_70, TURN_SPEED_30, DRIVE_THRU);
+            driveToPosition( 20, ((isRed)? -25.0:25.0), ((isRed)? -80.0:80.0), DRIVE_SPEED_90, TURN_SPEED_30, DRIVE_THRU);
             // Start up the shooter motor so it can be at speed when we reach the shooting zone
             robot.shooterMotorsSetPower( shooterPower );
             // Swivel the turret toward the RED or BLUE goal (assumes field location of 11.0/0.0/0deg)
             robot.turretServoSetPosition( (isRed)? 0.545 : 0.435 ); // right toward RED or left toward BLUE
-            driveToPosition( 10.0, ((isRed)? 0.0:0.0),  ((isRed)?  0.0:0.0),   DRIVE_SPEED_80, TURN_SPEED_30, DRIVE_TO);
+            driveToPosition( 12.0, ((isRed)? -2.0:+2.0),  ((isRed)?  0.0:0.0), DRIVE_SPEED_80, TURN_SPEED_30, DRIVE_TO);
         } // opModeIsActive
     } // collectSpikemark1FromFar
 
@@ -1220,48 +1216,43 @@ protected boolean driveToXY(double xTarget, double yTarget, double angleTarget, 
         double x1=38.0, x2=43.0, x3=47.0;  // UNIQUE TO SPIKE2
         double xPos, yPos, angDeg;
         // Reset the spindexer for collecting PGP
-        robot.spinServoSetPosition( SPIN_P1 );   // PGP goes into P1, P3, P2
+        robot.spinServoSetPosition( SPIN_P1 );   // we collect in P1, P2, P3 order
         // Transition from shooting zone to spike-mark zone (spikemark #1)
         if( opModeIsActive() ) {
             // drive away from the far shooting zone in a curved path toward the 1st spike mark
-            driveToPosition( x1, ((isRed)? -1.0:1.0), ((isRed)? -22.5:22.5), DRIVE_SPEED_50, TURN_SPEED_30, DRIVE_THRU);
-            driveToPosition( x2, ((isRed)? -3.0:3.0), ((isRed)? -45.0:45.0), DRIVE_SPEED_80, TURN_SPEED_30, DRIVE_THRU);
-            driveToPosition( x3, ((isRed)? -7.0:7.0), ((isRed)? -70.0:70.0), DRIVE_SPEED_80, TURN_SPEED_30, DRIVE_THRU);
+            driveToPosition( x1, ((isRed)? -1.0:1.0), ((isRed)? -22.5:22.5), DRIVE_SPEED_90, TURN_SPEED_30, DRIVE_THRU);
+            driveToPosition( x2, ((isRed)? -3.0:3.0), ((isRed)? -45.0:45.0), DRIVE_SPEED_90, TURN_SPEED_30, DRIVE_THRU);
+            driveToPosition( x3, ((isRed)? -7.0:7.0), ((isRed)? -70.0:70.0), DRIVE_SPEED_90, TURN_SPEED_30, DRIVE_THRU);
         }
         // Collect the 3 balls at that spike mark
         if( opModeIsActive() ) {
             // Turn on collector
             robot.intakeMotor.setPower(0.90);
             // Drive to the final location prior to actual ball collection
-            xPos   = (isRed)? 49.3 : 54.8;  // UNIQUE TO SPIKE2
+            xPos   = (isRed)? 48.3 : 54.8;  // UNIQUE TO SPIKE2
             yPos   = (isRed)? -12.6 : +12.6;
             angDeg = (isRed)? -90.0 : +90.0;
-            driveToPosition( xPos, yPos, angDeg, DRIVE_SPEED_20, TURN_SPEED_30, DRIVE_THRU);
+            driveToPosition( xPos, yPos, angDeg, DRIVE_SPEED_40, TURN_SPEED_30, DRIVE_THRU);
             // Drive into the 1st ball to collect it
-            yPos   = (isRed)? -19.5 : +19.5;
-            driveToPosition( xPos, yPos, angDeg, DRIVE_SPEED_20, TURN_SPEED_30, DRIVE_TO);
-            sleep(250);  // let it fully collect
+            yPos   = (isRed)? -22.0 : +22.0;
+            driveToPosition( xPos, yPos, angDeg, DRIVE_SPEED_15, TURN_SPEED_15, DRIVE_THRU);
             robot.spinServoSetPosition( SPIN_P2 );
-            sleep(750);  // wait for spindex
             // Drive into the 2nd ball to collect it
-            yPos   = (isRed)? -24.9 : +24.9;
-            driveToPosition( xPos, yPos, angDeg, DRIVE_SPEED_20, TURN_SPEED_30, DRIVE_TO);
-            sleep(250);  // let it fully collect
+            yPos   = (isRed)? -28.0 : +28.0;
+            driveToPosition( xPos, yPos, angDeg, DRIVE_SPEED_15, TURN_SPEED_15, DRIVE_THRU);
             robot.spinServoSetPosition( SPIN_P3 );
-            sleep(750);  // wait for spindex
             // Drive into the 3rd ball to collect it
-            yPos   = (isRed)? -30.2 : +30.2;
-            driveToPosition( xPos, yPos, angDeg, DRIVE_SPEED_20, TURN_SPEED_30, DRIVE_TO);
-            sleep(250);  // let it fully collect
+            yPos   = (isRed)? -33.0 : +33.0;
+            driveToPosition( xPos, yPos, angDeg, DRIVE_SPEED_15, TURN_SPEED_15, DRIVE_TO);
         } // opModeIsActive
         // Drive back to the shooting zone (back the way we came!)
         if( opModeIsActive() ) {
-            driveToPosition( x3, ((isRed)? -7.0:7.0), ((isRed)? -70.0:70.0), DRIVE_SPEED_70, TURN_SPEED_30, DRIVE_THRU);
+            driveToPosition( 42, ((isRed)? -25.0:25.0), ((isRed)? -80.0:80.0), DRIVE_SPEED_90, TURN_SPEED_30, DRIVE_THRU);
             // Start up the shooter motor so it can be at speed when we reach the shooting zone
             robot.shooterMotorsSetPower( shooterPower );
             // Swivel the turret toward the RED or BLUE goal (assumes field location of 11.0/0.0/0deg)
             robot.turretServoSetPosition( (isRed)? 0.545 : 0.435 ); // right toward RED or left toward BLUE
-            driveToPosition( 10.0, ((isRed)? 0.0:0.0),  ((isRed)?  0.0:0.0),   DRIVE_SPEED_80, TURN_SPEED_30, DRIVE_TO);
+            driveToPosition( 12.0, ((isRed)? -2.0:+2.0),  ((isRed)?  0.0:0.0), DRIVE_SPEED_80, TURN_SPEED_30, DRIVE_TO);
         } // opModeIsActive
     } // collectSpikemark2FromFar
 
@@ -1318,22 +1309,22 @@ protected boolean driveToXY(double xTarget, double yTarget, double angleTarget, 
     /* - robot is already parked in far shooting zone                                             */
     /* - turret is already rotated toward the goal                                                */
     /* - shooter is already up to speed                                                           */
-    public void scoreThreeBallsFromFar( int obeliskID ) {
+    public void scoreThreeBallsFromFar(BallOrder obeliskID, BallOrder loadOrder) {
         if( opModeIsActive() ) {
             // Ensure collector to ON to retain balls while spindexing
             robot.intakeMotor.setPower(0.90);
             // Convert the obelisk value into a shooting order
-            HardwareSwyftBot.SpindexerState[] shootOrder = getObeliskShootOrder(obeliskID);
+            SpindexerState[] shootOrder = getObeliskShootOrder(obeliskID, loadOrder);
+            // FIXME: should we swap SPIN_P1 and SPIN_P3 if alliance == blue since we reverse intake direction?
             // Shoot all 3 balls
             for(int i=0; i<shootOrder.length; i++) {
                 // rotate (if necessary) to the next position
-               robot.spinServoSetPosition( shootOrder[i] );
-//             robot.spinServoSetPositionCR( shootOrder[i] );
-               // wait for the rotation to complete, then launch that ball
-               sleep(900);
-              launchBall();
-              if( !opModeIsActive() ) break;
-              }
+                robot.spinServoSetPosition( shootOrder[i] );
+                // wait for the rotation to complete, then launch that ball
+                sleep(700);   // TODO: change to spindexer position feedback
+                launchBall();
+                if( !opModeIsActive() ) break;
+            }
         } // opModeIsActive
         // Turn off shooter while we go collect more balls
         robot.shooterMotorsSetPower( 0.0 );
@@ -1352,27 +1343,43 @@ protected boolean driveToXY(double xTarget, double yTarget, double angleTarget, 
     } // launchBall
 
     //--------------------------------------------------------------------------------------------
-    HardwareSwyftBot.SpindexerState[] getObeliskShootOrder(int obeliskID) {
-        // Note: common OBELISK april tags for both RED & BLUE alliance
-        //  21 = GPP (green purple purple)
-        //  22 = PGP (purple green purple)
-        //  23 = PPG (purple purple green)
+    static SpindexerState[] getObeliskShootOrder(BallOrder obeliskID, BallOrder loadOrder) {
 
-        // Based on our preload pattern:
-        // SPIN_P2 = purple
+        // Based on our preload pattern PPG_23:
         // SPIN_P1 = purple
+        // SPIN_P2 = purple
         // SPIN_P3 = green
 
-        switch (obeliskID) {
-            case 21:
-                return new HardwareSwyftBot.SpindexerState[] {SPIN_P3, SPIN_P2, SPIN_P1};
-            case 22:
-                return new HardwareSwyftBot.SpindexerState[] {SPIN_P2, SPIN_P3, SPIN_P1};
-            case 23:
-                return new HardwareSwyftBot.SpindexerState[] {SPIN_P2, SPIN_P1, SPIN_P3};
-            default:
-                return new HardwareSwyftBot.SpindexerState[0];
+        switch (loadOrder) {
+            case GPP_21:
+                switch (obeliskID) {
+                    case GPP_21:
+                        return new SpindexerState[] {SPIN_P1, SPIN_P2, SPIN_P3};
+                    case PGP_22:
+                        return new SpindexerState[] {SPIN_P2, SPIN_P1, SPIN_P3};
+                    case PPG_23:
+                        return new SpindexerState[] {SPIN_P3, SPIN_P2, SPIN_P1};
+                }
+            case PGP_22:
+                switch (obeliskID) {
+                    case GPP_21:
+                        return new SpindexerState[] {SPIN_P2, SPIN_P3, SPIN_P1};
+                    case PGP_22:
+                        return new SpindexerState[] {SPIN_P3, SPIN_P2, SPIN_P1};
+                    case PPG_23:
+                        return new SpindexerState[] {SPIN_P3, SPIN_P1, SPIN_P2};
+                }
+            case PPG_23:
+                switch (obeliskID) {
+                    case GPP_21:
+                        return new SpindexerState[] {SPIN_P3, SPIN_P2, SPIN_P1};
+                    case PGP_22:
+                        return new SpindexerState[] {SPIN_P2, SPIN_P3, SPIN_P1};
+                    case PPG_23:
+                        return new SpindexerState[] {SPIN_P2, SPIN_P1, SPIN_P3};
+                }
         }
+        return new SpindexerState[] {SPIN_P3, SPIN_P2, SPIN_P1}; // default
     } // getObeliskShootOrder
 
 } // AutonomousBase
