@@ -50,6 +50,7 @@ public abstract class AutonomousBase extends LinearOpMode {
     static final double  DRIVE_SPEED_80       = 0.80;    //
     static final double  DRIVE_SPEED_90       = 0.90;    //
     static final double  DRIVE_SPEED_100      = 1.00;    //
+    static final double  TURN_SPEED_10        = 0.10;    //
     static final double  TURN_SPEED_15        = 0.15;    //
     static final double  TURN_SPEED_20        = 0.15;    //
     static final double  TURN_SPEED_30        = 0.30;    //
@@ -78,23 +79,25 @@ public abstract class AutonomousBase extends LinearOpMode {
     double robotGlobalYCoordinatePosition       = 0.0;   // inches
     double robotOrientationRadians              = 0.0;   // radians 0deg (straight forward)
 
-    // Odometry values corrected by external source, IE AprilTags
-//  FieldCoordinate robotGlobalCoordinateCorrectedPosition = new FieldCoordinate(0.0, 0.0, 0.0);
-
+    double  autoAimDistance                     = 0.0;   // inches  (always calculated)
+    double  autoAimPower                        = 0.0;   // power   (always calculated)
+    double  autoAimAngleDeg                     = 0.0;   // degrees (always calculated)
+    boolean autoAimEnabled                      = false; // turret power/angle only adjusted when this flag is enabled
+    
     double autoXpos                             = 0.0;   // Keeps track of our Autonomous X-Y position and Angle commands.
     double autoYpos                             = 0.0;   // (useful when a given value remains UNCHANGED from one
     double autoAngle                            = 0.0;   // movement to the next, or INCREMENTAL change from current location).
 
     String      storageDir;
-    boolean     redAlliance      = true;  // Is alliance BLUE (true) or RED (false)?
+    boolean     redAlliance      = true;  // Is alliance BLUE (true) or RED (false)?  Replaced in the individual autonomous programs!
     boolean     forceAlliance    = false; // Override vision pipeline? (toggled during init phase of autonomous)
     boolean     doSpikeMark1     = true;
     boolean     doSpikeMark2     = true;
     boolean     doSpikeMark3     = false;
     boolean     doSpikeMark0     = false;  // the 3 balls in the corner
-    int         initMenuSelected = 1;    // start on the first entry
-    int         initMenuMax      = 4;    // we have 6 total entries
-    int         startDelaySec    = 0;     // 1: wait [seconds] at startup -- applies to both left/rigth starting positions
+    int         initMenuSelected = 1;      // start on the first entry
+    int         initMenuMax      = 6;      // we have 6 total entries
+    int         startDelaySec    = 0;      // 1: wait [seconds] at startup -- applies to both left/rigth starting positions
     int         scoringZones     = 0;
 
     //---------------------------------------------------------------------------------------
@@ -227,23 +230,27 @@ public abstract class AutonomousBase extends LinearOpMode {
                 break;
             //-------------- COLLECT/SCORE SPIKEMARK 1 --------------
             case 3 :
-                if( nextValue ) {
+                if( nextValue || prevValue ) {
                     doSpikeMark1 = !doSpikeMark1;
-                } // next
-
-                if( prevValue ) {
-                    doSpikeMark1 = !doSpikeMark1;
-                } // prev
+                } // next/prev
                 break;
             //-------------- COLLECT/SCORE SPIKEMARK 2 --------------
             case 4 :
-                if( nextValue ) {
+                if( nextValue || prevValue ) {
                     doSpikeMark2 = !doSpikeMark2;
-                } // next
-
-                if( prevValue ) {
-                    doSpikeMark2 = !doSpikeMark2;
-                } // prev
+                } // next/prev
+                break;
+            //-------------- COLLECT/SCORE SPIKEMARK 3 --------------
+            case 5 :
+                if( nextValue || prevValue ) {
+                    doSpikeMark3 = !doSpikeMark3;
+                } // next/prev
+                break;
+            //-------------- COLLECT/SCORE 3 BALLS IN CORNER --------------
+            case 6 :
+                if( nextValue || prevValue ) {
+                    doSpikeMark0 = !doSpikeMark0;
+                } // next/prev
                 break;
             //-------------- SHOULDN'T GET HERE --------------
             default : // recover from bad state
@@ -257,6 +264,8 @@ public abstract class AutonomousBase extends LinearOpMode {
         telemetry.addData("Open Gate", "%s %s", gateOption.getDescription(), ((initMenuSelected==2)? "<-":"  ") );
         telemetry.addData("Do SpikeMark1", "%s %s", ((doSpikeMark1)?"yes":"no"), ((initMenuSelected==3)? "<-":"  ") );
         telemetry.addData("Do SpikeMark2", "%s %s", ((doSpikeMark2)?"yes":"no"), ((initMenuSelected==4)? "<-":"  ") );
+        telemetry.addData("Do SpikeMark3", "%s %s", ((doSpikeMark3)?"yes":"no"), ((initMenuSelected==5)? "<-":"  ") );
+        telemetry.addData("Do Corner 3",   "%s %s", ((doSpikeMark0)?"yes":"no"), ((initMenuSelected==6)? "<-":"  ") );
         telemetry.addData("Odometry","x=%.2f y=%.2f  %.2f deg",
                 robotGlobalXCoordinatePosition, robotGlobalYCoordinatePosition, Math.toDegrees(robotOrientationRadians) );
         telemetry.addLine("Preload=GPP (Green down thru shooter!)");
@@ -282,10 +291,51 @@ public abstract class AutonomousBase extends LinearOpMode {
         robotGlobalXCoordinatePosition = pos.getX(DistanceUnit.INCH);
         robotGlobalYCoordinatePosition = pos.getY(DistanceUnit.INCH);
         robotOrientationRadians        = pos.getHeading(AngleUnit.RADIANS);
+        // process other hardware state machines
         robot.processInjectionStateMachine();
 //      robot.processSpindexerControl();  // only for continuous rotation
+        // Compute the power/angle needed for auto-aiming
+        autoAimDistance = getShootDistanceAutoFar( (redAlliance)? Alliance.RED : Alliance.BLUE );
+        autoAimPower    = robot.computeShooterPower(autoAimDistance);
+        autoAimAngleDeg = getShootAngleDegAutoFar( (redAlliance)? Alliance.RED : Alliance.BLUE );
+        if( autoAimEnabled ) {
+           robot.setTurretAngle(autoAimAngleDeg);
+           robot.shooterMotorsSetPower(autoAimPower);
+        }
     } // performEveryLoop
 
+    /*--------------------------------------------------------------------------------------------*/
+    public double getShootDistanceAutoFar(Alliance alliance) {
+        double currentX = robotGlobalXCoordinatePosition;
+        double currentY = robotGlobalYCoordinatePosition;
+        // Positions for targets based on 0,0,0 starting position against far wall
+        double targetX = (alliance == Alliance.BLUE)? +125 : +125;
+        double targetY = (alliance == Alliance.BLUE)?  +47 : -47;
+        // Compute distance to target point inside the goal
+        double deltaX = targetX - currentX;
+        double deltaY = targetY - currentY;
+        double distance = Math.sqrt( Math.pow(deltaX,2) + Math.pow(deltaY,2) );
+        return distance;
+    } // getShootDistanceAutoFar    
+
+    /*--------------------------------------------------------------------------------------------*/
+    public double getShootAngleDegAutoFar(Alliance alliance) {
+        double currentX = robotGlobalXCoordinatePosition;
+        double currentY = robotGlobalYCoordinatePosition;
+        // Compute distance to target point inside the goal
+        double targetX = (alliance == Alliance.BLUE)? +137 : +137;
+        double targetY = (alliance == Alliance.BLUE)?  +47 : -47;
+        // Compute distance to target point inside the goal
+        double deltaX = targetX - currentX;
+        double deltaY = targetY - currentY;
+        // Compute the angle assuming the robot is facing forward at 0 degrees
+        double targetFromStraight = Math.toDegrees( Math.atan2(deltaY,deltaX) );
+        // Adjust for the current robot orientation
+        double shootAngle = targetFromStraight - Math.toDegrees(robotOrientationRadians);
+        return shootAngle;
+    } // getShootAngleDegAutoFar
+
+    /*--------------------------------------------------------------------------------------------*/
     public void processLimelightObelisk() {
         LLResult result = robot.limelight.getLatestResult();
         if (result.isValid()) {
@@ -1167,8 +1217,55 @@ protected boolean driveToXY(double xTarget, double yTarget, double angleTarget, 
     } // AngleWrapDegrees
 
     /*--------------------------------------------------------------------------------------------*/
+    public void collectSpikemark0FromFar( boolean isRed, double shooterPower ) {
+
+        // Transition from shooting zone to corner
+        if( opModeIsActive() ) {
+          // Reset the spindexer for collecting GPP
+          robot.spinServoSetPosition( (isRed)? SPIN_P1:SPIN_P3 );
+          driveToPosition( 6.4, ((isRed)? -22.5:+22.5), ((isRed)? -90.0:+90.0), DRIVE_SPEED_90, TURN_SPEED_10, DRIVE_THRU);
+          // Turn on collector
+          robot.intakeMotor.setPower(0.90);
+          driveToPosition( 5.9, ((isRed)? -27.2:+27.2), ((isRed)? -98.0:+98.0), DRIVE_SPEED_90, TURN_SPEED_10, DRIVE_THRU);
+          // collect balls 1 and 2 (constrains ball 3 with the wheel/bumper)
+          driveToPosition( 4.8, ((isRed)? -42.0:+42.0), ((isRed)? -108.0:+108.0), DRIVE_SPEED_20, TURN_SPEED_10, DRIVE_TO);
+          }
+        // Collect the 3 corner balls
+        if( opModeIsActive() ) {
+          // The last bit is a straight forward drive for TIME (we may not get to a specific DRIVE_TO position otherwise)
+          timeDriveStraight(DRIVE_SPEED_10, 800);
+          // strafe sideways (toward corner) to line up for 2nd ball
+          timeDriveStrafe( (isRed)? -DRIVE_SPEED_30:+DRIVE_SPEED_30, 600);
+          // Drive forward some more to collect 2nd and align bumper to grab the 3rd ball
+          timeDriveStraight(DRIVE_SPEED_10, 300);
+          // By now we should have collected both balls (1 & 2) either with initial drive in, or during the strafe, so index
+          robot.spinServoSetPosition( SPIN_P2 );
+          // strafe sideways (away from corner) to pull the 3rd ball out
+          timeDriveStrafe( (isRed)? DRIVE_SPEED_30:-DRIVE_SPEED_30, 300);
+          // where are we now?
+          double xPos = robotGlobalXCoordinatePosition - 1.0;  // cheat back toward wall
+          double yPos = robotGlobalYCoordinatePosition;
+          // rotate to an angle that we can collect the 3rd ball
+          driveToPosition( xPos, yPos, ((isRed)? -95.0:+95.0), DRIVE_SPEED_40, TURN_SPEED_30, DRIVE_TO);
+          // time-drive forward into the wall to collect
+          timeDriveStraight(DRIVE_SPEED_15, 900);
+          }
+        // Drive back to the shooting zone (back the way we came!)
+        if( opModeIsActive() ) {
+            // reverse collector in case we over collected
+            robot.intakeMotor.setPower(-0.40);
+            driveToPosition( 6.4, ((isRed)? -22.5:+22.5), ((isRed)? -90.0:+90), DRIVE_SPEED_90, TURN_SPEED_10, DRIVE_THRU);
+            // Turn collector back on forward
+            robot.intakeMotor.setPower(0.90);
+            autoAimEnabled = true;
+            driveToPosition( 12.0, ((isRed)? -2.0:+2.0), ((isRed)?  0.0:0.0), DRIVE_SPEED_80, TURN_SPEED_10, DRIVE_TO);
+            autoAimEnabled = false;
+        } // opModeIsActive
+    } // collectSpikemark0FromFar
+
+    /*--------------------------------------------------------------------------------------------*/
     public void collectSpikemark1FromFar( boolean isRed, double shooterPower ) {
-        double x1=16.0, x2=21.0, x3=24.0;  // UNIQUE TO SPIKE1
+        double x1=16.0, x2=20.0, x3=23.0;  // UNIQUE TO SPIKE1
         double xPos, yPos, angDeg;
         // Reset the spindexer for collecting GPP
         robot.spinServoSetPosition( SPIN_P1 );   // we collect in P1, P2, P3 order
@@ -1202,18 +1299,20 @@ protected boolean driveToXY(double xTarget, double yTarget, double angleTarget, 
         } // opModeIsActive
         // Drive back to the shooting zone (back the way we came!)
         if( opModeIsActive() ) {
-            driveToPosition( 20, ((isRed)? -25.0:25.0), ((isRed)? -80.0:80.0), DRIVE_SPEED_90, TURN_SPEED_30, DRIVE_THRU);
-            // Start up the shooter motor so it can be at speed when we reach the shooting zone
-            robot.shooterMotorsSetPower( shooterPower );
-            // Swivel the turret toward the RED or BLUE goal (assumes field location of 11.0/0.0/0deg)
-            robot.turretServoSetPosition( (isRed)? 0.545 : 0.435 ); // right toward RED or left toward BLUE
-            driveToPosition( 12.0, ((isRed)? -2.0:+2.0),  ((isRed)?  0.0:0.0), DRIVE_SPEED_80, TURN_SPEED_30, DRIVE_TO);
+            // reverse collector in case we over collected
+            robot.intakeMotor.setPower(-0.40);
+            driveToPosition( 20, ((isRed)? -25.0:25.0), ((isRed)? -80.0:80.0), DRIVE_SPEED_90, TURN_SPEED_30, DRIVE_THRU); // UNIQUE TO SPIKE1
+            // Turn collector back on forward
+            robot.intakeMotor.setPower(0.90);
+            autoAimEnabled = true;
+            driveToPosition( 12.0, ((isRed)? -2.0:+2.0), ((isRed)?  0.0:0.0), DRIVE_SPEED_80, TURN_SPEED_30, DRIVE_TO);
+            autoAimEnabled = false;
         } // opModeIsActive
     } // collectSpikemark1FromFar
 
     /*--------------------------------------------------------------------------------------------*/
     public void collectSpikemark2FromFar( boolean isRed, double shooterPower ) {
-        double x1=38.0, x2=43.0, x3=47.0;  // UNIQUE TO SPIKE2
+        double x1=37.0, x2=41.0, x3=44.0;  // UNIQUE TO SPIKE2
         double xPos, yPos, angDeg;
         // Reset the spindexer for collecting PGP
         robot.spinServoSetPosition( SPIN_P1 );   // we collect in P1, P2, P3 order
@@ -1229,7 +1328,7 @@ protected boolean driveToXY(double xTarget, double yTarget, double angleTarget, 
             // Turn on collector
             robot.intakeMotor.setPower(0.90);
             // Drive to the final location prior to actual ball collection
-            xPos   = (isRed)? 48.3 : 54.8;  // UNIQUE TO SPIKE2
+            xPos   = (isRed)? 48.3 : 53.8;  // UNIQUE TO SPIKE2
             yPos   = (isRed)? -12.6 : +12.6;
             angDeg = (isRed)? -90.0 : +90.0;
             driveToPosition( xPos, yPos, angDeg, DRIVE_SPEED_40, TURN_SPEED_30, DRIVE_THRU);
@@ -1247,12 +1346,14 @@ protected boolean driveToXY(double xTarget, double yTarget, double angleTarget, 
         } // opModeIsActive
         // Drive back to the shooting zone (back the way we came!)
         if( opModeIsActive() ) {
-            driveToPosition( 42, ((isRed)? -25.0:25.0), ((isRed)? -80.0:80.0), DRIVE_SPEED_90, TURN_SPEED_30, DRIVE_THRU);
-            // Start up the shooter motor so it can be at speed when we reach the shooting zone
-            robot.shooterMotorsSetPower( shooterPower );
-            // Swivel the turret toward the RED or BLUE goal (assumes field location of 11.0/0.0/0deg)
-            robot.turretServoSetPosition( (isRed)? 0.545 : 0.435 ); // right toward RED or left toward BLUE
-            driveToPosition( 12.0, ((isRed)? -2.0:+2.0),  ((isRed)?  0.0:0.0), DRIVE_SPEED_80, TURN_SPEED_30, DRIVE_TO);
+            // reverse collector in case we over collected
+            robot.intakeMotor.setPower(-0.40);
+            driveToPosition( 42, ((isRed)? -25.0:25.0), ((isRed)? -80.0:80.0), DRIVE_SPEED_90, TURN_SPEED_30, DRIVE_THRU); // UNIQUE TO SPIKE2
+            // Turn collector back on forward
+            robot.intakeMotor.setPower(0.90);
+            autoAimEnabled = true;
+            driveToPosition( 12.0, ((isRed)? -2.0:+2.0), ((isRed)?  0.0:0.0), DRIVE_SPEED_80, TURN_SPEED_30, DRIVE_TO);
+            autoAimEnabled = false;
         } // opModeIsActive
     } // collectSpikemark2FromFar
 
@@ -1261,46 +1362,45 @@ protected boolean driveToXY(double xTarget, double yTarget, double angleTarget, 
         double x1=62.0, x2=67.0, x3=71.0;  // UNIQUE TO SPIKE3
         double xPos, yPos, angDeg;
         // Reset the spindexer for collecting PPG
-        robot.spinServoSetPosition( SPIN_P2 );   // PPG goes into P2, P1, P3
+        robot.spinServoSetPosition( SPIN_P1 );   // we collect in P1, P2, P3 order
         // Transition from shooting zone to spike-mark zone (spikemark #1)
         if( opModeIsActive() ) {
             // drive away from the far shooting zone in a curved path toward the 1st spike mark
-            driveToPosition( x1, ((isRed)? -1.0:1.0), ((isRed)? -22.5:22.5), DRIVE_SPEED_40, TURN_SPEED_30, DRIVE_THRU);
-            driveToPosition( x2, ((isRed)? -3.0:3.0), ((isRed)? -45.0:45.0), DRIVE_SPEED_60, TURN_SPEED_30, DRIVE_THRU);
-            driveToPosition( x3, ((isRed)? -7.0:7.0), ((isRed)? -70.0:70.0), DRIVE_SPEED_70, TURN_SPEED_30, DRIVE_THRU);
+            driveToPosition( x1, ((isRed)? -1.0:1.0), ((isRed)? -22.5:22.5), DRIVE_SPEED_90, TURN_SPEED_30, DRIVE_THRU);
+            driveToPosition( x2, ((isRed)? -3.0:3.0), ((isRed)? -45.0:45.0), DRIVE_SPEED_90, TURN_SPEED_30, DRIVE_THRU);
+            driveToPosition( x3, ((isRed)? -7.0:7.0), ((isRed)? -70.0:70.0), DRIVE_SPEED_90, TURN_SPEED_30, DRIVE_THRU);
         }
         // Collect the 3 balls at that spike mark
         if( opModeIsActive() ) {
             // Turn on collector
             robot.intakeMotor.setPower(0.90);
             // Drive to the final location prior to actual ball collection
-            xPos   = (isRed)? 73.0 : 78.5;  // UNIQUE TO SPIKE3
+            xPos   = (isRed)? 67.0 : 72.5;  // UNIQUE TO SPIKE3
             yPos   = (isRed)? -12.6 : +12.6;
             angDeg = (isRed)? -90.0 : +90.0;
-            driveToPosition( xPos, yPos, angDeg, DRIVE_SPEED_20, TURN_SPEED_30, DRIVE_THRU);
+            driveToPosition( xPos, yPos, angDeg, DRIVE_SPEED_40, TURN_SPEED_30, DRIVE_THRU);
             // Drive into the 1st ball to collect it
-            yPos   = (isRed)? -17.7 : +17.7;
-            driveToPosition( xPos, yPos, angDeg, DRIVE_SPEED_20, TURN_SPEED_30, DRIVE_TO);
-            sleep(250);  // let it fully collect
-            robot.spinServoSetPosition( SPIN_P1 );
-            sleep(750);  // wait for spindex
+            yPos   = (isRed)? -22.0 : +22.0;
+            driveToPosition( xPos, yPos, angDeg, DRIVE_SPEED_15, TURN_SPEED_15, DRIVE_THRU);
+            robot.spinServoSetPosition( SPIN_P2 );
             // Drive into the 2nd ball to collect it
-            yPos   = (isRed)? -22.9 : +22.9;
-            driveToPosition( xPos, yPos, angDeg, DRIVE_SPEED_20, TURN_SPEED_30, DRIVE_TO);
+            yPos   = (isRed)? -28.0 : +28.0;
+            driveToPosition( xPos, yPos, angDeg, DRIVE_SPEED_15, TURN_SPEED_15, DRIVE_THRU);
             robot.spinServoSetPosition( SPIN_P3 );
-            sleep(750);  // wait for spindex
             // Drive into the 3rd ball to collect it
-            yPos   = (isRed)? -29.9 : +29.9;
-            driveToPosition( xPos, yPos, angDeg, DRIVE_SPEED_20, TURN_SPEED_30, DRIVE_TO);
+            yPos   = (isRed)? -33.0 : +33.0;
+            driveToPosition( xPos, yPos, angDeg, DRIVE_SPEED_15, TURN_SPEED_15, DRIVE_TO);
         } // opModeIsActive
         // Drive back to the shooting zone (back the way we came!)
         if( opModeIsActive() ) {
-            driveToPosition( x3, ((isRed)? -7.0:7.0), ((isRed)? -70.0:70.0), DRIVE_SPEED_70, TURN_SPEED_30, DRIVE_THRU);
-            // Start up the shooter motor so it can be at speed when we reach the shooting zone
-            robot.shooterMotorsSetPower( shooterPower );
-            // Swivel the turret toward the RED or BLUE goal (assumes field location of 11.0/0.0/0deg)
-            robot.turretServoSetPosition( (isRed)? 0.545 : 0.435 ); // right toward RED or left toward BLUE
-            driveToPosition( 10.0, ((isRed)? 0.0:0.0),  ((isRed)?  0.0:0.0),   DRIVE_SPEED_80, TURN_SPEED_30, DRIVE_TO);
+            // reverse collector in case we over collected
+            robot.intakeMotor.setPower(-0.40);
+            driveToPosition( 50, ((isRed)? -35.0:35.0), ((isRed)? -80.0:80.0), DRIVE_SPEED_90, TURN_SPEED_30, DRIVE_THRU); // UNIQUE TO SPIKE3
+            // Turn collector back on forward
+            robot.intakeMotor.setPower(0.90);
+            autoAimEnabled = true;
+            driveToPosition( 12.0, ((isRed)? -2.0:+2.0), ((isRed)?  0.0:0.0), DRIVE_SPEED_80, TURN_SPEED_30, DRIVE_TO);
+            autoAimEnabled = false;
         } // opModeIsActive
     } // collectSpikemark3FromFar
 
