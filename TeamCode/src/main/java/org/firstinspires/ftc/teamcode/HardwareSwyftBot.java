@@ -119,15 +119,18 @@ public class HardwareSwyftBot
     //====== 2025 DECODE SEASON MECHANISM MOTORS (RUN_USING_ENCODER) =====
     protected DcMotorEx intakeMotor     = null;
 
+    public final static double INTAKE_FWD_COLLECT = +0.90;  // aggressively collect
+    public final static double INTAKE_REV_REJECT  = -0.40;  // gently reject overcollect so don't send flying
+
     protected DcMotorEx shooterMotor1   = null;  // upper 
     protected DcMotorEx shooterMotor2   = null;  // lower
     public    double    shooterMotor1Vel = 0.0;  // encoder counts per second
     public    double    shooterMotor2Vel = 0.0;  // encoder counts per second
+    public    double    shooterTargetVel = 0.0;  // encoder counts per second
     public    double    shooterMotor1Amps= 0.0;  // mA
     public    double    shooterMotor2Amps= 0.0;  // mA
 
-    public    double      shooterMotorsSet   = 0.0;   // TODO: these need to be velocities (not powers)
-    public    double      shooterMotorsGet   = 0.0;   // TODO: if we're going to check status
+    public    double      shooterMotorsSet   = 0.0;
     public    boolean     shooterMotorsReady = false; // Have we reached the target velocity?
     public    ElapsedTime shooterMotorsTimer = new ElapsedTime();
     public    double      shooterMotorsTime  = 0.0;   // how long it took to reach "ready" (msec)
@@ -362,7 +365,7 @@ public class HardwareSwyftBot
 
         //--------------------------------------------------------------------------------------------
         // Define and Initialize intake motor (left side on ROBOT1, right side on ROBOT2)
-        intakeMotor  = hwMap.get(DcMotorEx.class,"IntakeMotor");
+        intakeMotor = hwMap.get(DcMotorEx.class,"IntakeMotor");
         intakeMotor.setDirection( (isRobot2)? DcMotor.Direction.REVERSE :  DcMotor.Direction.FORWARD);
         intakeMotor.setPower( 0.0 );
         intakeMotor.setMode(DcMotor.RunMode.STOP_AND_RESET_ENCODER);
@@ -501,10 +504,21 @@ public class HardwareSwyftBot
         //   getPower() / getVelocity() / getCurrent()
         shooterMotor1Vel = shooterMotor1.getVelocity();
         shooterMotor2Vel = shooterMotor2.getVelocity();
+        boolean shooterMotor1Ready = (Math.abs(shooterMotor1Vel - shooterTargetVel) < 20)? true:false;
+        boolean shooterMotor2Ready = (Math.abs(shooterMotor2Vel - shooterTargetVel) < 20)? true:false;
+        shooterMotorsReady = shooterMotor1Ready && shooterMotor2Ready; // FIXME: is this a good threshold?
+        if( shooterMotorsReady && (shooterMotorsTime == 0) ) {
+            shooterMotorsTime = shooterMotorsTimer.milliseconds();
+        }
+
         // Where has the turret been commanded to?
         turretServoGet   = turretServo.getPosition();
         // Where is the turret currently located?  (average the two feedback values)
         turretServoPos   = (getTurretPosition(true) + getTurretPosition(false))/2.0;
+        boolean turretInPos = (Math.abs(turretServoPos - turretServoSet) < 0.01)? true:false;
+        if(turretServoIsBusy && turretInPos ) { // FIXME: is this a good threshold?
+            turretServoIsBusy = false;
+        }
         // NOTE: motor mA data is NOT part of the bulk-read, so increases cycle time!
 //      shooterMotor1Amps = shooterMotor1.getCurrent(MILLIAMPS);
 //      shooterMotor2Amps = shooterMotor1.getCurrent(MILLIAMPS);
@@ -522,9 +536,11 @@ public class HardwareSwyftBot
         shooterMotor1.setPower( shooterPower );
         shooterMotor2.setPower( shooterPower );
         shooterMotorsSet = shooterPower;
+        shooterTargetVel = computeShooterVelocity(shooterPower);
         // reset our "ready" flag and start a timer
-        shooterMotorsReady = false;  // TODO: Need to finish this logic
+        shooterMotorsReady = false;
         shooterMotorsTimer.reset();
+        shooterMotorsTime = 0.0;
     } // shooterMotorsSetPower
 
     /*--------------------------------------------------------------------------------------------*/
@@ -696,8 +712,7 @@ public class HardwareSwyftBot
         
         // Store this setting so we can track progress of the turret motion
         turretServoSet    = targetPosition;
-        turretServoIsBusy = true;  // TODO: need performEveryLoop logic to clear/timeout!
-        
+        turretServoIsBusy = true;
     } // turretServoSetPosition
 
     /*--------------------------------------------------------------------------------------------*/
@@ -850,13 +865,23 @@ public class HardwareSwyftBot
     /*--------------------------------------------------------------------------------------------*/
     // Convert distance from goal (inches) into a power setting for our shooter motors.
     // Four our shooter and field layout, the value should be between 0.45 and 0.59
-    public static double computeShooterPower(double x) {
+    public double computeShooterPower(double x) {
         // power = 0.051 + (-2.53E-03)x + 3.9E-05x^2 + -1.21E-07x^3
         double shooterPower = 0.51 + -2.53E-3 * x + 3.9E-5 * Math.pow(x,2) + -1.21E-7 * Math.pow(x,3);
         shooterPower = Math.max(shooterPower, 0.45); // We should never be below 0.45
         shooterPower = Math.min(shooterPower, 0.60); // We should never exceed 0.60
         return shooterPower;
     } // computeShooterPower
+
+    // Compute the expected shooter motor velocity [ticks/sec] for the specified power setting
+    private double computeShooterVelocity(double shooterMotorsSet) {
+        // velocity = -43396x^3 + 69296x^2 - 34252x + 6395.3
+        double x = shooterMotorsSet;
+        double velocity = 6395.3 + (-34252 * x) + (69296 * Math.pow(x,2)) + (-43396 * Math.pow(x,3));
+        velocity = Math.max(velocity, 1040); // We should never be below 1040
+        velocity = Math.min(velocity, 1400); // We should never exceed 1400
+        return velocity;
+    } // computeShooterVelocity
 
     /*--------------------------------------------------------------------------------------------*/
     public double getShootAngleDeg(Alliance alliance) {

@@ -20,6 +20,10 @@ public class AutonomousBlueNear extends AutonomousBase {
     @Override
     public void runOpMode() throws InterruptedException {
 
+        doSpikeMark1 = false;
+        doSpikeMark2 = false;
+        doSpikeMark3 = false;
+
         // Initialize robot hardware (autonomous mode)
         telemetry.addData("State", "Initializing (please wait)");
         telemetry.update();
@@ -103,7 +107,7 @@ public class AutonomousBlueNear extends AutonomousBase {
 
         //===== Score Preload Balls (from the NEAR zone) ==========
         // Enable collector/InKeeper so it's safe to spindex
-        robot.intakeMotor.setPower(0.90);
+        robot.intakeMotor.setPower( robot.INTAKE_FWD_COLLECT );
         // Even if we delay, we want to immediately start up getting shooter up to speed
         robot.shooterMotorsSetPower( shooterPowerNear );
         // Enable automatic shooter power/angle as we drive the next segment
@@ -114,25 +118,27 @@ public class AutonomousBlueNear extends AutonomousBase {
         scoreThreeBallsFromField(obeliskID, PPG_23);
         // update our field position based on the AprilTag
         robot.setPinpointFieldPosition(robot.limelightFieldXpos, robot.limelightFieldYpos, robot.limelightFieldAngleDeg);
-/*
+
+        // TODO: doSpikeMark* disabled by default at the start of runOpMode. remove that when implemented.
+
         // Collect and Score 3rd spike mark
         if( doSpikeMark3 ) {
-            collectSpikemark3FromNear( redAlliance );
+            collectSpikemarkFromNear(3,redAlliance );
             scoreThreeBallsFromField(obeliskID, (redAlliance)? GPP_21:GPP_21 );
         }
 
         // Collect and Score 2nd spike mark
         if( doSpikeMark2 ) {
-            collectSpikemark2FromNear( redAlliance );
+            collectSpikemarkFromNear(2,redAlliance );
             scoreThreeBallsFromField(obeliskID, (redAlliance)? PPG_23:PPG_23 );
         }
 
         // Collect and Score 1st spike mark
         if( doSpikeMark1 ) {
-            collectSpikemark1FromNear(redAlliance);
+            collectSpikemarkFromNear(1,redAlliance);
             scoreThreeBallsFromField(obeliskID, (redAlliance)? PGP_22:PGP_22 );
         }
-*/
+
         // Drive the final position we want for MOVEMENT points
         driveToPosition(40.7, 17.6, +49.0, DRIVE_SPEED_30, TURN_SPEED_30, DRIVE_TO);
 

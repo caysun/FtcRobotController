@@ -192,10 +192,16 @@ public abstract class Teleop extends LinearOpMode {
             telemetry.addData(" "," %.2f in/sec %.2f in/sec %.2f deg/sec", 
                    robot.robotGlobalXvelocity, robot.robotGlobalYvelocity, robot.robotAngleVelocity );
             telemetry.addData("Goal", "%s dist: %.2f in, angle: %.2f deg", ((blueAlliance)? "BLUE":"RED"), odoShootDistance, odoShootAngleDeg);
-//          telemetry.addData("Shooter POWER", "%.3f (P1 tri/cross to adjust)", shooterPower);
-//          telemetry.addData("Shooter RPM", "%.1f %.1f", robot.shooterMotor1Vel, robot.shooterMotor2Vel );
-            telemetry.addData("Turret", "set %.3f get %.3f analog %.3f", robot.turretServoSet, robot.turretServoGet, robot.turretServoPos );
+            telemetry.addData("Shooter POWER", "%.3f (P1 tri/cross to adjust)", shooterPower);
+            if(robot.shooterMotorsReady) {
+                telemetry.addData("Shooter ms to ready ", "%.1f", robot.shooterMotorsTime);
+            } else {
+                telemetry.addData("Shooter Target Velocity", "%.1f", robot.shooterTargetVel );
+            }
+            telemetry.addData("Shooter Velocity", "%.1f %.1f", robot.shooterMotor1Vel, robot.shooterMotor2Vel );
 //          telemetry.addData("Shooter mA", "%.1f %.1f", robot.shooterMotor1Amps, robot.shooterMotor2Amps );
+            telemetry.addData("Turret", "set %.3f get %.3f analog %.3f", robot.turretServoSet, robot.turretServoGet, robot.turretServoPos );
+            telemetry.addData(" ", "in position: %s", (robot.turretServoIsBusy)? "no":"YES");
 //          telemetry.addData("Spindexer", "set %.2f get %.2f time %.3f ms",
 //                  robot.spinServoSetPos, robot.getSpindexerPos(), robot.spinServoTime );
             telemetry.addLine( (robot.isRobot2)? "Robot2" : "Robot1");
@@ -491,7 +497,7 @@ public abstract class Teleop extends LinearOpMode {
         {
             if (intakeMotorOnFwd == false){
                 // Turn on collector in FORWARD
-                robot.intakeMotor.setPower(0.90);
+                robot.intakeMotor.setPower( robot.INTAKE_FWD_COLLECT );
                 intakeMotorOnFwd = true;
                 intakeMotorOnRev = false;
             } else{
@@ -506,7 +512,7 @@ public abstract class Teleop extends LinearOpMode {
         {
             if (intakeMotorOnRev == false){
                 // Turn on collector in REVERSE
-                robot.intakeMotor.setPower(-0.90);
+                robot.intakeMotor.setPower( robot.INTAKE_REV_REJECT );
                 intakeMotorOnFwd = false;
                 intakeMotorOnRev = true;
             } else{
@@ -564,12 +570,12 @@ public abstract class Teleop extends LinearOpMode {
     /*---------------------------------------------------------------------------------*/
     void processShooter() {
         if( gamepad1.triangleWasPressed() ) {
-            shooterPower += 0.01;
+            shooterPower += 0.005;
             if(shooterMotorsOn) {
                 robot.shooterMotorsSetPower( shooterPower );
             }
         } else if( gamepad1.crossWasPressed() ) {
-            shooterPower -= 0.01;
+            shooterPower -= 0.005;
             if(shooterMotorsOn) {
                 robot.shooterMotorsSetPower( shooterPower );
             }
