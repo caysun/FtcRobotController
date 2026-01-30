@@ -20,10 +20,6 @@ public class AutonomousBlueNear extends AutonomousBase {
     @Override
     public void runOpMode() throws InterruptedException {
 
-        doSpikeMark1 = false;
-        doSpikeMark2 = false;
-        doSpikeMark3 = false;
-
         // Initialize robot hardware (autonomous mode)
         telemetry.addData("State", "Initializing (please wait)");
         telemetry.update();
@@ -117,9 +113,7 @@ public class AutonomousBlueNear extends AutonomousBase {
         autoAimEnabled = false;
         scoreThreeBallsFromField(obeliskID, PPG_23);
         // update our field position based on the AprilTag
-        robot.setPinpointFieldPosition(robot.limelightFieldXpos, robot.limelightFieldYpos, robot.limelightFieldAngleDeg);
-
-        // TODO: doSpikeMark* disabled by default at the start of runOpMode. remove that when implemented.
+        robot.setPinpointFieldPosition(robot.limelightFieldXpos, robot.limelightFieldYpos);
 
         // Collect and Score 3rd spike mark
         if( doSpikeMark3 ) {

@@ -23,7 +23,9 @@ public abstract class Teleop extends LinearOpMode {
     double  shooterPower = 0.55;  // far shooting default. scale for location.
     double  odoShootDistance = 0.0;
     double  odoShootAngleDeg = 0.0;
-    boolean autoAimEnabled   = false; // turret power/angle only adjusted when this flag is enabled
+    boolean isAutoShooterAngleGood = false; // false if the robot facing too far away from the target
+    boolean isAutoShooterSpeedGood = false; // is shooter motor up to target speed
+    boolean autoAimEnabled   = true; // turret power/angle only adjusted when this flag is enabled
 
     boolean blueAlliance;   // set in the Blue/Red
     boolean farAlliance;    //
@@ -172,7 +174,6 @@ public abstract class Teleop extends LinearOpMode {
             processCollector();
             processTurretAutoAim();
             processSpindexer();
-            processShooterFlap();
             processShooter();
             processInjector();
 
@@ -202,14 +203,18 @@ public abstract class Teleop extends LinearOpMode {
 //          telemetry.addData("Shooter mA", "%.1f %.1f", robot.shooterMotor1Amps, robot.shooterMotor2Amps );
             telemetry.addData("Turret", "set %.3f get %.3f analog %.3f", robot.turretServoSet, robot.turretServoGet, robot.turretServoPos );
             telemetry.addData(" ", "in position: %s", (robot.turretServoIsBusy)? "no":"YES");
-//          telemetry.addData("Spindexer", "set %.2f get %.2f time %.3f ms",
-//                  robot.spinServoSetPos, robot.getSpindexerPos(), robot.spinServoTime );
-            telemetry.addLine( (robot.isRobot2)? "Robot2" : "Robot1");
+            telemetry.addData("Spindexer", "set=%.2f get=%.2f time=%.3f ms",
+                    robot.spinServoSetPos, robot.getSpindexerPos(), robot.spinServoTime );
+            telemetry.addData(" ", "delta=%.3f InPos=%s timeout=%f msec",
+                    robot.spinServoDelta, ((robot.spinServoInPos)? "YES":"no"), robot.spinServoTimeout );
 //          telemetry.addData("Driver Angle", "%.3f deg", driverAngle );
 //          telemetry.addData("IMU Angle", "%.3f deg", robot.headingIMU() );
 //          telemetry.addData("Driver Centric", "%.3f deg", (driverAngle - robot.headingIMU()) );
-            telemetry.addData("Robot velocity", "x=%.2f y=%.2f ang=%.2f",
-                robot.robotGlobalXvelocity, robot.robotGlobalYvelocity, robot.robotAngleVelocity );
+//          telemetry.addData("Robot velocity", "x=%.2f y=%.2f ang=%.2f",
+//              robot.robotGlobalXvelocity, robot.robotGlobalYvelocity, robot.robotAngleVelocity );
+            telemetry.addData("Spinventory", "Left: %s Center: %s Right: %s", 
+                robot.getLeftBall(), robot.getCenterBall(), robot.getRightBall() );
+            telemetry.addLine( (robot.isRobot2)? "Robot2" : "Robot1");
             telemetry.addData("CycleTime", "%.1f msec (%.1f Hz)", cycleTimeElapsed, cycleTimeHz);
             telemetry.update();
 
@@ -223,8 +228,9 @@ public abstract class Teleop extends LinearOpMode {
     /*---------------------------------------------------------------------------------*/
     void performEveryLoopTeleop() {
         robot.readBulkData();
+        isAutoShooterSpeedGood = robot.shooterMotorsReady;
         robot.processInjectionStateMachine();
-//      robot.processSpindexerControl();  // only for spinServoCR (not currently used)
+        robot.processColorDetection();
         if( enableOdometry ) {
             robot.updatePinpointFieldPosition();
             robot.updateLimelightFieldPosition();
@@ -244,7 +250,7 @@ public abstract class Teleop extends LinearOpMode {
         boolean robotAslow = (Math.abs(robot.robotAngleVelocity)   < 0.1)? true:false;
         boolean notDriving = (robotXslow && robotYslow && robotAslow)?  true:false;
         if( canSeeAprilTag && qualityReading && notDriving ) {
-            robot.setPinpointFieldPosition(robot.limelightFieldXpos, robot.limelightFieldYpos, robot.limelightFieldAngleDeg);
+            robot.setPinpointFieldPosition(robot.limelightFieldXpos, robot.limelightFieldYpos);
         }
     }  // updatePinpointFieldPosition
 
@@ -526,46 +532,44 @@ public abstract class Teleop extends LinearOpMode {
 
     /*---------------------------------------------------------------------------------*/
     void processSpindexer() {
-        boolean safeToSpindex = (robot.getInjectorAngle() <= robot.LIFT_SERVO_RESET_ANG);
+        boolean safeToSpindex    = (robot.getInjectorAngle() <= robot.LIFT_SERVO_RESET_ANG);
+        boolean leftTriggerHeld  = (gamepad2.left_trigger  > 0.25)? true:false;
+        boolean rightTriggerHeld = (gamepad2.right_trigger > 0.25)? true:false;
         if( !safeToSpindex ) return;
-        // Rotate spindexer left one position?
-        if( gamepad2.leftBumperWasPressed() ) {
+        // Rotate spindexer RIGHT one FULL position?
+        if( gamepad2.rightBumperWasPressed() ) {
             if (robot.spinServoCurPos != SPIN_P1)
-                robot.spinServoSetPosition(SPIN_DECREMENT);
+                robot.spinServoSetPosition( SPIN_DECREMENT );
             else
                 gamepad2.runRumbleEffect(spindexerRumbleL);
-//          robot.spinServoSetPositionCR(SPIN_DECREMENT);  // only for spinServoCR
         }
-        // Rotate spindexer right one position?
-        else if( gamepad2.rightBumperWasPressed() ) {
+        // Rotate spindexer LEFT one FULL position?
+        else if( gamepad2.leftBumperWasPressed() ) {
             if( robot.spinServoCurPos != SPIN_P3 )
                 robot.spinServoSetPosition( SPIN_INCREMENT );
             else
                 gamepad2.runRumbleEffect(spindexerRumbleR);
-//          robot.spinServoSetPositionCR(SPIN_INCREMENT);   // only for spinServoCR
-        } // bumper
+        }
+        // Temporarily rotate spindexer RIGHT one HALF position?
+        else if( (rightTriggerHeld == true) && (robot.spinServoMidPos == false) ) {
+           robot.spinServoSavPos = robot.spinServoCurPos;  // save current position
+           HardwareSwyftBot.SpindexerState leftHalf = robot.whichSpindexerHalfPosition( SPIN_DECREMENT );
+           robot.spinServoSetPosition( leftHalf );
+           robot.spinServoMidPos = true;  // remember to undo!
+        }
+        // Temporarily rotate spindexer LEFTT one HALF position?
+        else if( (leftTriggerHeld == true) && (robot.spinServoMidPos == false) ) {
+           robot.spinServoSavPos = robot.spinServoCurPos;  // save current position
+            HardwareSwyftBot.SpindexerState rightHalf = robot.whichSpindexerHalfPosition( SPIN_INCREMENT );
+           robot.spinServoSetPosition( rightHalf );
+           robot.spinServoMidPos = true;  // remember to undo!
+        }
+        // Do we need to RESTORE from a temporary half position?
+        else if( (robot.spinServoMidPos == true) && (leftTriggerHeld == false) && (rightTriggerHeld == false)) {
+            robot.spinServoSetPosition( robot.spinServoSavPos );
+            robot.spinServoMidPos = false;
+        }
     } // processSpindexer
-
-    /*---------------------------------------------------------------------------------*/
-    void processShooterFlap() {
-    // Check for an OFF-to-ON toggle of gamepad2 DPAD buttons (controls shooter flapper up/down)
-        if( gamepad2.dpadDownWasPressed() ) {
-            // aim LOWER
-            robot.shooterServoCurPos += 0.01;
-            // Don't exceed our mechanical limits
-            if( robot.shooterServoCurPos > robot.SHOOTER_SERVO_MAX )
-                robot.shooterServoCurPos = robot.SHOOTER_SERVO_MAX;
-            robot.shooterServo.setPosition( robot.shooterServoCurPos );
-        }
-        else if( gamepad2.dpadUpWasPressed() ) {
-            // aim HIGHER
-            robot.shooterServoCurPos -= 0.01;
-            // Don't exceed our mechanical limits
-            if( robot.shooterServoCurPos < robot.SHOOTER_SERVO_MIN )
-                robot.shooterServoCurPos = robot.SHOOTER_SERVO_MIN;
-            robot.shooterServo.setPosition( robot.shooterServoCurPos );
-        }
-    }   // processShooterFlap
 
     /*---------------------------------------------------------------------------------*/
     void processShooter() {
@@ -596,7 +600,6 @@ public abstract class Teleop extends LinearOpMode {
 
     private void processTurretAutoAim() {
         // Do we want to use them? (so long as the button is held...)
-        autoAimEnabled = gamepad1.left_bumper;
         if( autoAimEnabled ) {
             // update pinpoint coordinates if conditions are good to do so
             updatePinpointFieldPosition();
@@ -604,7 +607,7 @@ public abstract class Teleop extends LinearOpMode {
             odoShootDistance = robot.getShootDistance( (blueAlliance)? Alliance.BLUE : Alliance.RED );
             odoShootAngleDeg = robot.getShootAngleDeg( (blueAlliance)? Alliance.BLUE : Alliance.RED );
             // set the turret angle and shooter power
-            robot.setTurretAngle(odoShootAngleDeg);
+            isAutoShooterAngleGood = robot.setTurretAngle(odoShootAngleDeg);
             shooterPower = robot.computeShooterPower(odoShootDistance);
             if(shooterMotorsOn) {
                 robot.shooterMotorsSetPower(shooterPower);
@@ -616,8 +619,12 @@ public abstract class Teleop extends LinearOpMode {
             odoShootAngleDeg = robot.getShootAngleDeg( (blueAlliance)? Alliance.BLUE : Alliance.RED );
         }
         // Has something gone wrong and we want to reset to manual straight-on mode?
-        if (gamepad1.rightBumperWasPressed()) {
+        if (gamepad1.leftBumperWasPressed()) {
+            autoAimEnabled = true;
+        }
+        else if (gamepad1.rightBumperWasPressed()) {
             // reset turret to the center and reset shooter power to FAR zone
+            autoAimEnabled = false;
             robot.turretServoSetPosition(robot.TURRET_SERVO_INIT);
             shooterPower = 0.55;
             if(shooterMotorsOn) {
@@ -628,8 +635,9 @@ public abstract class Teleop extends LinearOpMode {
 
     /*---------------------------------------------------------------------------------*/
     void processInjector() {
+        boolean safeToInject = (robot.spinServoMidPos == true)? false:true;
         // Check for an OFF-to-ON toggle of the gamepad2 TRIANGLE button (command ball injection!)
-        if( gamepad2.triangleWasPressed() ) {
+        if( safeToInject && gamepad2.triangleWasPressed() ) {
             // Ensure an earlier injection request isn't already underway
             if ((robot.liftServoBusyU == false) && (robot.liftServoBusyD == false)) {
                 robot.startInjectionStateMachine();

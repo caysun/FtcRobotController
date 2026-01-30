@@ -7,11 +7,15 @@ import com.qualcomm.hardware.limelightvision.LLResult;
 import com.qualcomm.robotcore.hardware.AnalogInput;
 import com.qualcomm.robotcore.hardware.DcMotor;
 import com.qualcomm.robotcore.hardware.DcMotorEx;
+import com.qualcomm.robotcore.hardware.DigitalChannel;
 import com.qualcomm.robotcore.hardware.HardwareMap;
 import com.qualcomm.robotcore.hardware.IMU;
+import com.qualcomm.robotcore.hardware.NormalizedColorSensor;
+import com.qualcomm.robotcore.hardware.NormalizedRGBA;
 import com.qualcomm.robotcore.hardware.PIDFCoefficients;
 import com.qualcomm.robotcore.hardware.Servo;
 import com.qualcomm.robotcore.hardware.CRServo;
+import com.qualcomm.robotcore.hardware.SwitchableLight;
 import com.qualcomm.robotcore.util.ElapsedTime;
 import com.qualcomm.robotcore.util.Range;
 
@@ -29,6 +33,12 @@ import org.firstinspires.ftc.robotcore.external.navigation.YawPitchRollAngles;
 import static com.qualcomm.hardware.rev.RevHubOrientationOnRobot.LogoFacingDirection;
 import static com.qualcomm.hardware.rev.RevHubOrientationOnRobot.UsbFacingDirection;
 import static java.lang.Thread.sleep;
+
+import android.graphics.Color;
+
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.List;
 
 /*
  * Hardware class for Swyft Robotics SWYFT DRIVE V2 chassis with 86mm mecanum wheels
@@ -139,19 +149,6 @@ public class HardwareSwyftBot
     public final static double SHOOTER_MOTOR_MID  = 0.45;
     public final static double SHOOTER_MOTOR_AUTO = 0.45;
 
-    //====== SHOOTER DEFLECTOR SERVO =====
-    public Servo       shooterServo    = null;
-    public AnalogInput shooterServoPos = null;
-
-    public final static double SHOOTER_SERVO_INIT = 0.50;   // straight up
-    public final static double SHOOTER_SERVO_INIT_ANGLE = 180.0;
-    public final static double SHOOTER_SERVO_MIN = 0.50;
-    public final static double SHOOTER_SERVO_MIN_ANGLE = 180.0;
-    public final static double SHOOTER_SERVO_MAX = 0.50;
-    public final static double SHOOTER_SERVO_MAX_ANGLE = 180.0;
-
-    public double shooterServoCurPos = SHOOTER_SERVO_INIT;
-
     //====== TURRET 5-turn SERVOS =====
     public Servo       turretServo     = null;  // 2 servos! (controlled together via Y cable)
     public AnalogInput turretServoPos1 = null;
@@ -172,15 +169,18 @@ public class HardwareSwyftBot
     public final static double TURRET_SERVO_MIN  = 0.06; // -180deg
     public final static double TURRET_CTS_PER_DEG = (TURRET_SERVO_P90 - TURRET_SERVO_N90)/180.0;
 
-    public final static double TURRET_R1_OFFSET = -0.008; // ROBOT1 offset to align with reference
+    public final static double TURRET_R1_OFFSET = -0.005; // ROBOT1 offset to align with reference
     public final static double TURRET_R2_OFFSET =  0.000; // ROBOT2 offset to align with reference
 
     //====== SPINDEXER SERVO =====
     public Servo       spinServo    = null;
-    public CRServo     spinServoCR  = null;
     public AnalogInput spinServoPos = null;
 
-    public enum SpindexerTargetPosition {
+/* ========== ONLY USED FOR CONTINUOUS ROTATION MODE SPINDEXING! ==========
+
+    public CRServo     spinServoCR  = null;
+
+    public enum SpindexerTargetPosition {  // Position 1/2/3 angles [degrees]
         P1(47),
         P2(167),
         P3(287);
@@ -205,30 +205,54 @@ public class HardwareSwyftBot
         currentSpindexerTarget = values[index];
     }
 
+   ========== ONLY USED FOR CONTINUOUS ROTATION MODE SPINDEXING! ========== */
+
     //===== ROBOT1 spindexer servo positions:
-    public final static double SPIN_SERVO_P1_R1 = 0.130;  // position 1
-    public final static double SPIN_SERVO_P2_R1 = 0.500;  // position 2 (also the INIT position)
-    public final static double SPIN_SERVO_P3_R1 = 0.880;  // position 3
+    public final static double SPIN_SERVO_H1_R1 = 0.000;  // halfway1 (from R1)
+    public final static double SPIN_SERVO_P1_R1 = 0.130;  // POSITION 1
+    public final static double SPIN_SERVO_H2_R1 = 0.315;  // halfway2
+    public final static double SPIN_SERVO_P2_R1 = 0.500;  // POSITION 2
+    public final static double SPIN_SERVO_H3_R1 = 0.690;  // halfway3
+    public final static double SPIN_SERVO_P3_R1 = 0.880;  // POSITION 3 (also the INIT position)
+    public final static double SPIN_SERVO_H4_R1 = 1.000;  // halfway4 (from R3)
     //===== ROBOT2 spindexer servo positions:
-    public final static double SPIN_SERVO_P1_R2 = 0.105;  // position 1
-    public final static double SPIN_SERVO_P2_R2 = 0.490;  // position 2 (also the INIT position)
-    public final static double SPIN_SERVO_P3_R2 = 0.870;  // position 3
+    public final static double SPIN_SERVO_H1_R2 = 0.000;  // halfway1 (from R1)
+    public final static double SPIN_SERVO_P1_R2 = 0.105;  // POSITION 1
+    public final static double SPIN_SERVO_H2_R2 = 0.298;  // halfway2
+    public final static double SPIN_SERVO_P2_R2 = 0.490;  // POSITION 2
+    public final static double SPIN_SERVO_H3_R2 = 0.680;  // halfway3
+    public final static double SPIN_SERVO_P3_R2 = 0.870;  // POSITION 3 (also the INIT position)
+    public final static double SPIN_SERVO_H4_R2 = 1.000;  // halfway4 (from R3)
     //===== These get populated after IMU init, when we know if we're ROBOT1 or ROBOT2
-    public double SPIN_SERVO_P1;    // position 1
-    public double SPIN_SERVO_P2;    // position 2 (also the INIT position)
-    public double SPIN_SERVO_P3;    // position 3
+    public double SPIN_SERVO_H1;    // halfway1 (from R1)
+    public double SPIN_SERVO_P1;    // POSITION 1
+    public double SPIN_SERVO_H2;    // halfway2
+    public double SPIN_SERVO_P2;    // POSITION 2
+    public double SPIN_SERVO_H3;    // halfway3
+    public double SPIN_SERVO_P3;    // POSITION 3
+    public double SPIN_SERVO_H4;    // halfway4 (from R3)
 
     public enum SpindexerState {
+        SPIN_H1,
         SPIN_P1,
+        SPIN_H2,
         SPIN_P2,
+        SPIN_H3,
         SPIN_P3,
+        SPIN_H4,
         SPIN_INCREMENT,
         SPIN_DECREMENT
     }
     
-    public SpindexerState spinServoCurPos = SpindexerState.SPIN_P2;  // commanded spindexer enum
-    public double         spinServoSetPos = 0.0;  // commanded spindexer position
-    public boolean        spinServoInPos  = true; // have we reached the commanded position
+    public SpindexerState spinServoCurPos = SpindexerState.SPIN_P3;  // commanded spindexer enum
+    public SpindexerState spinServoSavPos = SpindexerState.SPIN_P3;  // saved spindexer enum (half!)
+    public double         spinServoSetPos = 0.0;   // spindexer servo position commanded 
+    public double         spinServoGetPos = 0.0;   // spindexer position analog feedback
+    public double         spinServoDelta  = 0.0;   // spindexer distance to travel (0.0 to 1.0)
+    public double         spinServoTimeout= 0.0;   // allowed travel time [msec] before we assume a problem
+    public boolean        spinServoMidPos = false; // are we in a temporary midway-position?
+    public boolean        spinServoInPos  = true;  // have we reached the commanded position
+    public boolean        spinServoAbort  = false; // are we currently in an aborted state?
     public ElapsedTime    spinServoTimer  = new ElapsedTime();
     public double         spinServoTime   = 0.0;  // msec to get into position
 
@@ -246,13 +270,13 @@ public class HardwareSwyftBot
       //   173 (178)  . . .    (239)  235           <-- 5deg tolerance on RESET and INJECT
     public final static double LIFT_SERVO_RESET_ANG_R1  = 178.3;  // 0.520 = 173.3deg
     public final static double LIFT_SERVO_INJECT_ANG_R1 = 230.2;  // 0.330 = 235.2deg
-    //===== ROBOT2 injector/lift servo positions:
-    public final static double LIFT_SERVO_INIT_R2   = 0.510;
-    public final static double LIFT_SERVO_RESET_R2  = 0.510;
-    public final static double LIFT_SERVO_INJECT_R2 = 0.320;
-      //   176.95 (181)  . . .    (234)  238.7           <-- 5deg tolerance on RESET and INJECT
-    public final static double LIFT_SERVO_RESET_ANG_R2  = 181.0;  // 0.510 = 176.95deg
-    public final static double LIFT_SERVO_INJECT_ANG_R2 = 234.0;  // 0.320 = 238.7deg
+    //===== ROBOT2 injector/lift servo positions: (Axon Mini)
+    public final static double LIFT_SERVO_INIT_R2   = 0.590;
+    public final static double LIFT_SERVO_RESET_R2  = 0.590;
+    public final static double LIFT_SERVO_INJECT_R2 = 0.230;
+      //   167.6 (173)  . . .    (218)  221.2           <-- 5deg tolerance on RESET and INJECT
+    public final static double LIFT_SERVO_RESET_ANG_R2  = 172.6;  // 0.590 = 167.6deg
+    public final static double LIFT_SERVO_INJECT_ANG_R2 = 218.2;  // 0.230 = 223.2deg
     //===== These get populated after IMU init, when we know if we're ROBOT1 or ROBOT2
     public double LIFT_SERVO_INIT;
     public double LIFT_SERVO_RESET;
@@ -275,6 +299,43 @@ public class HardwareSwyftBot
         MOTIF_PGP,  // PURPLE, GREEN, PURPLE
         MOTIF_PPG   // PURPLE, PURPLE, GREEN
     }
+
+    public enum Ball
+    {
+        None,
+        Purple,
+        Green
+    }
+
+    // The position the spindexer is currently at. Init sets it to left.
+    // -1 = Right
+    // 0 = Centered
+    // +1 = Left
+    public final static int SPINDEXER_RIGHT = -1;
+    public final static int SPINDEXER_CENTER = 0;
+    public final static int SPINDEXER_LEFT = 1;
+    protected int spindex = 1;
+    public int spindexerRight = 1;
+    public int spindexerCenter = 2;
+    public int spindexerLeft = 0;
+    // Index 0 = Right - Rotate -1 to fire
+    // Index 1 = Center - No rotation to fire
+    // Index 2 = Left - Rotate +1 to fire
+    public List<Ball> spinventory = new ArrayList<>(Arrays.asList(Ball.None, Ball.None, Ball.None));
+    protected DigitalChannel        leftBallPresenceSensor;
+    protected NormalizedColorSensor leftBallColorSensor;
+    public boolean leftBallWasPresent     = false;
+    public boolean leftBallIsPresent      = false;
+    public boolean leftBallDetectingColor = false;
+
+    private DigitalChannel          rightBallPresenceSensor;
+    protected NormalizedColorSensor rightBallColorSensor;
+    public boolean rightBallWasPresent     = false;
+    public boolean rightBallIsPresent      = false;
+    public boolean rightBallDetectingColor = false;
+
+    public int ballColorDetectingReads = 0;
+    public static int MAX_BALL_COLOR_READS = 10;
 
     /* local OpMode members. */
     protected HardwareMap hwMap = null;
@@ -304,9 +365,13 @@ public class HardwareSwyftBot
         initIMU( isAutonomous );
 
         // define the spindexer servo positions (fine-tuned uniquely for each robot)
+        SPIN_SERVO_H1 = (isRobot1)? SPIN_SERVO_H1_R1 : SPIN_SERVO_H1_R2;
         SPIN_SERVO_P1 = (isRobot1)? SPIN_SERVO_P1_R1 : SPIN_SERVO_P1_R2;
+        SPIN_SERVO_H2 = (isRobot1)? SPIN_SERVO_H2_R1 : SPIN_SERVO_H2_R2;
         SPIN_SERVO_P2 = (isRobot1)? SPIN_SERVO_P2_R1 : SPIN_SERVO_P2_R2;
+        SPIN_SERVO_H3 = (isRobot1)? SPIN_SERVO_H3_R1 : SPIN_SERVO_H3_R2;
         SPIN_SERVO_P3 = (isRobot1)? SPIN_SERVO_P3_R1 : SPIN_SERVO_P3_R2;
+        SPIN_SERVO_H4 = (isRobot1)? SPIN_SERVO_H4_R1 : SPIN_SERVO_H4_R2;
 
         // define the shooter lift/injector servo positions (fine-tuned uniquely for each robot)
         LIFT_SERVO_INIT       = (isRobot1)? LIFT_SERVO_INIT_R1 : LIFT_SERVO_INIT_R2;
@@ -402,10 +467,6 @@ public class HardwareSwyftBot
         shooterMotor1.setPIDFCoefficients(DcMotor.RunMode.RUN_USING_ENCODER, shooterPIDF);
         shooterMotor2.setPIDFCoefficients(DcMotor.RunMode.RUN_USING_ENCODER, shooterPIDF);
 
-        // Initialize the servo on the shooter
-        shooterServo    = hwMap.servo.get("shooterServo");          // servo port 0 (Control Hub)
-//      shooterServoPos = hwMap.analogInput.get("shooterServoPos"); // Analog port ? (Control Hub)
-
         //--------------------------------------------------------------------------------------------
         // Initialize the servos that rotate the turret
         turretServo     = hwMap.servo.get("turretServo");            // servo port 2 (Control Hub)
@@ -427,6 +488,32 @@ public class HardwareSwyftBot
         // Initialize servo control of the goBilda LED
         ledServo = hwMap.tryGet(Servo.class, "ledServo");
 
+        //--------------------------------------------------------------------------------------------
+        // Ball detector sensors
+        if(isRobot1)
+        {
+            leftBallColorSensor = hwMap.get(NormalizedColorSensor.class, "LeftColorSensor");
+            rightBallColorSensor = hwMap.get(NormalizedColorSensor.class, "RightColorSensor");
+
+            // If possible, turn the light on in the beginning
+            // (it might already be on anyway, we just make sure it is if we can).
+            if (leftBallColorSensor instanceof SwitchableLight) {
+                ((SwitchableLight) leftBallColorSensor).enableLight(true);
+            }
+            leftBallColorSensor.setGain(10.0F);
+
+            if (rightBallColorSensor instanceof SwitchableLight) {
+                ((SwitchableLight) rightBallColorSensor).enableLight(true);
+            }
+            rightBallColorSensor.setGain(10.0F);
+
+            leftBallPresenceSensor  = hwMap.get(DigitalChannel.class, "leftPresence");  // digital 0 (0-1)
+            rightBallPresenceSensor = hwMap.get(DigitalChannel.class, "rightPresence"); // digital 0 (0-1)
+
+            leftBallPresenceSensor.setMode(DigitalChannel.Mode.INPUT);
+            rightBallPresenceSensor.setMode(DigitalChannel.Mode.INPUT);
+        }
+
         // Ensure all servos are in the initialize position (YES for auto; NO for teleop)
         if( isAutonomous ) {
            resetEncoders();
@@ -440,7 +527,8 @@ public class HardwareSwyftBot
     // transfer any offset from autonomous to teleop if the frame of reference differs.
     public void resetGlobalCoordinatePosition( double posX, double posY, double posAngleDegree ){
 //      robot.odom.resetPosAndIMU();   // don't need full recalibration; just reset our position in case of any movement
-        setPinpointFieldPosition( posX, posY, posAngleDegree ); // in case we don't run autonomous first!
+        setPinpointFieldPosition( posX, posY); // in case we don't run autonomous first!
+        odom.setHeading(posAngleDegree, AngleUnit.DEGREES);
         robotGlobalXCoordinatePosition = posX;  // This will get overwritten the first time
         robotGlobalYCoordinatePosition = posY;  // we call robot.odom.update()!
         robotOrientationDegrees        = posAngleDegree;
@@ -451,7 +539,6 @@ public class HardwareSwyftBot
         // Initialize the injector servo first! (so it's out of the way for spindexer rotation)
         liftServo.setPosition(LIFT_SERVO_INIT);
         turretServoSetPosition( TURRET_SERVO_INIT );
-        shooterServo.setPosition(SHOOTER_SERVO_INIT);
         sleep(250);
         spinServoSetPosition(SpindexerState.SPIN_P3); // allows autonomous progression 3-2-1
         // Also initialize/calibrate the pinpoint odometry computer
@@ -504,29 +591,34 @@ public class HardwareSwyftBot
         //   getPower() / getVelocity() / getCurrent()
         shooterMotor1Vel = shooterMotor1.getVelocity();
         shooterMotor2Vel = shooterMotor2.getVelocity();
-        boolean shooterMotor1Ready = (Math.abs(shooterMotor1Vel - shooterTargetVel) < 20)? true:false;
-        boolean shooterMotor2Ready = (Math.abs(shooterMotor2Vel - shooterTargetVel) < 20)? true:false;
-        shooterMotorsReady = shooterMotor1Ready && shooterMotor2Ready; // FIXME: is this a good threshold?
+        boolean shooterMotor1Ready = (Math.abs(shooterMotor1Vel - shooterTargetVel) < 25)? true:false;
+        boolean shooterMotor2Ready = (Math.abs(shooterMotor2Vel - shooterTargetVel) < 25)? true:false;
+        shooterMotorsReady = shooterMotor1Ready && shooterMotor2Ready;
         if( shooterMotorsReady && (shooterMotorsTime == 0) ) {
             shooterMotorsTime = shooterMotorsTimer.milliseconds();
         }
+        // NOTE: motor mA data is NOT part of the bulk-read, so increases cycle time!
+//      shooterMotor1Amps = shooterMotor1.getCurrent(MILLIAMPS);
+//      shooterMotor2Amps = shooterMotor1.getCurrent(MILLIAMPS);
 
         // Where has the turret been commanded to?
         turretServoGet   = turretServo.getPosition();
         // Where is the turret currently located?  (average the two feedback values)
         turretServoPos   = (getTurretPosition(true) + getTurretPosition(false))/2.0;
-        boolean turretInPos = (Math.abs(turretServoPos - turretServoSet) < 0.01)? true:false;
-        if(turretServoIsBusy && turretInPos ) { // FIXME: is this a good threshold?
+        boolean turretInPos = (Math.abs(turretServoPos - turretServoSet) < 0.009)? true:false;
+        if(turretServoIsBusy && turretInPos ) {
             turretServoIsBusy = false;
         }
-        // NOTE: motor mA data is NOT part of the bulk-read, so increases cycle time!
-//      shooterMotor1Amps = shooterMotor1.getCurrent(MILLIAMPS);
-//      shooterMotor2Amps = shooterMotor1.getCurrent(MILLIAMPS);
-        // Has the spindexer reached the commanded position?
-        double spindexerError = Math.abs( spinServoSetPos - getSpindexerPos() );
-        if( !spinServoInPos && (spindexerError < 0.030) ) {
-            spinServoTime = spinServoTimer.milliseconds();
-            spinServoInPos = true;
+
+        // Update spindexer current position using spinServoPos analog feedback
+        spinServoGetPos = getSpindexerPos();
+
+        // Read presence sensors
+        if(isRobot1) {
+            leftBallWasPresent  = leftBallIsPresent;
+            leftBallIsPresent   = leftBallPresenceSensor.getState();
+            rightBallWasPresent = rightBallIsPresent;
+            rightBallIsPresent  = rightBallPresenceSensor.getState();
         }
     } // readBulkData
 
@@ -609,41 +701,6 @@ public class HardwareSwyftBot
         return delta;
     }
 
-    public double computeAlignedFlapperPos() {
-        double deltaServoPos = computeLaunchAngle()/(thetaMaxFlapper - thetaMinFlapper) + SHOOTER_SERVO_HORIZONTAL_POSITION;
-        return SHOOTER_SERVO_INIT;
-        //return (deltaServoPos > SHOOTER_SERVO_POS_VERTICAL || deltaServoPos < SHOOTER_SERVO_HORIZONTAL_POSITION)? shooterServo.getPosition() : deltaServoPos;
-    }
-
-    public double computeLaunchAngle() {
-        double v = LAUNCH_EXIT_SPEED;
-        double d = Math.sqrt((Math.pow((X_BIN_L - robotGlobalXCoordinatePosition/12.0), 2) + Math.pow((Y_BIN_L - robotGlobalYCoordinatePosition/12.0),2)));
-        double h = Z_BIN - Z_SHOOTER;
-        double g = 32.174;  // ft/sec/sec gravitational constant
-
-        double discriminant = v * v * v * v - g * (g * d * d + 2 * v * v * h);
-
-        // Check if a real solution exists
-        if (discriminant < 0) return 999.9;
-
-        double sqrtTerm = Math.sqrt(discriminant);
-
-        // Two possible tangent values
-        double tanTheta1 = (v * v + sqrtTerm) / (g * d);
-        double tanTheta2 = (v * v - sqrtTerm) / (g * d);
-
-        // Compute angles in radians (2 of them)
-        double theta1 = Math.atan(tanTheta1);
-        double theta2 = Math.atan(tanTheta2);
-
-        // Ensure thetaUp > thetaDown
-        double thetaUp = Math.max(theta1, theta2);
-        double thetaDown = Math.min(theta1, theta2);
-
-        return Math.toDegrees(thetaUp);
-    } // computeAbsoluteAngle
-    //BRODY!!
-
     /*--------------------------------------------------------------------------------------------*/
     public void driveTrainMotors( double frontLeft, double frontRight, double rearLeft, double rearRight )
     {
@@ -716,16 +773,24 @@ public class HardwareSwyftBot
     } // turretServoSetPosition
 
     /*--------------------------------------------------------------------------------------------*/
-    // currently limited to +/- 90deg
-    public void setTurretAngle( double targetAngleDegrees )
+
+    /**
+     * @return true if the position was set successfully, false if range limited.
+     */
+    public boolean setTurretAngle( double targetAngleDegrees )
     {
         // convert degrees into servo position setting centered around the init position.
-        double targetAngleCounts = -(targetAngleDegrees * TURRET_CTS_PER_DEG) + TURRET_SERVO_INIT;
+        final double targetAngleCounts = -(targetAngleDegrees * TURRET_CTS_PER_DEG) + TURRET_SERVO_INIT;
+        double setAngleCounts = targetAngleCounts;
         // make sure it's within our safe range
-        if( targetAngleCounts < TURRET_SERVO_N90 ) targetAngleCounts = TURRET_SERVO_N90;
-        if( targetAngleCounts > TURRET_SERVO_MAX ) targetAngleCounts = TURRET_SERVO_MAX;
+        setAngleCounts = Math.max(setAngleCounts, TURRET_SERVO_N90); // We should never be below TURRET_SERVO_N90
+        setAngleCounts = Math.min(setAngleCounts, TURRET_SERVO_MAX); // We should never exceed TURRET_SERVO_MAX
+
         // set both turret servos (connected on Y cable)
-        turretServoSetPosition( targetAngleCounts );
+        turretServoSetPosition( setAngleCounts );
+
+        double epsilon = 0.000001d;
+        return Math.abs(targetAngleCounts - setAngleCounts) < epsilon;
     } // setTurretAngle
 
     /*--------------------------------------------------------------------------------------------*/
@@ -773,12 +838,14 @@ public class HardwareSwyftBot
     } // updatePinpointFieldPosition
 
     /*--------------------------------------------------------------------------------------------*/
-    public void setPinpointFieldPosition( double X, double Y, double headingDeg ) {
-        Pose2D newFieldPosition = new Pose2D(DistanceUnit.INCH, X, Y, AngleUnit.DEGREES, headingDeg );
-        odom.setPosition( newFieldPosition );
+    // This function lets us update the Pinpoint odometry X,Y location using information from
+	// a field-mounted Apriltag.  Using the limelight3a Metatag2 values only provides X,Y
+	// not angle, so we depend on the Pinpoint internal high-accuracy IMU to maintain angle.
+    public void setPinpointFieldPosition( double X, double Y ) {
+        odom.setPosX(X, DistanceUnit.INCH);
+        odom.setPosY(Y, DistanceUnit.INCH);
         robotGlobalXCoordinatePosition = X;
         robotGlobalYCoordinatePosition = Y;
-        robotOrientationDegrees        = headingDeg;
     } // setPinpointFieldPosition
 
     /*--------------------------------------------------------------------------------------------*/
@@ -925,7 +992,7 @@ public class HardwareSwyftBot
     public double getSpindexerPos()
     {
         return computeAxonPos( spinServoPos.getVoltage() );
-    } // getSpindexerAngle
+    } // getSpindexerPos
 
     /*--------------------------------------------------------------------------------------------*/
     public double getSpindexerAngle()
@@ -934,6 +1001,13 @@ public class HardwareSwyftBot
     } // getSpindexerAngle
 
     /*--------------------------------------------------------------------------------------------*/
+    public double getInjectorAngle()
+    {
+      return computeAxonAngle( liftServoPos.getVoltage() );
+    } // getInjectorAngle
+
+/* ========== ONLY USED FOR CONTINUOUS ROTATION MODE SPINDEXING! ==========
+
     public double computeSpindexerError(double targetDeg, double actualDeg) {
         // Shortest angular error considering wrap-around at 360°
         double diff = targetDeg - actualDeg;
@@ -943,7 +1017,6 @@ public class HardwareSwyftBot
         return diff;
     } // getSpindexerError
 
-    /*--------------------------------------------------------------------------------------------*/
     double spindexerProportionalControl(double errorDeg) {
         final double MIN_POWER_TO_ROTATE = 0.08; // 8% servo power
         double rawPower;
@@ -972,87 +1045,182 @@ public class HardwareSwyftBot
         spinServoCR.setPower( spindexerPowerSetting );
     } // processSpindexerControl
 
-    /*--------------------------------------------------------------------------------------------*/
-    public double getInjectorAngle()
-    {
-      return computeAxonAngle( liftServoPos.getVoltage() );
-    } // getInjectorAngle
+   ========== ONLY USED FOR CONTINUOUS ROTATION MODE SPINDEXING! ========== */
 
     /*--------------------------------------------------------------------------------------------*/
     public void spinServoSetPosition( SpindexerState position )
     {
+        // NOTE: As we convert from the desired state as an "enum" to an actual servo position,
+        // it's not a one-to-one (enum vs. servo setting) at definition time because we have 2 robots!
+        // Consequently, we maintain a servo position as a "double" for each enumerated state.
+        // That association is handled below.
         switch( position ) {
+            case SPIN_H1 :
+                initSpindexerMovement( SPIN_SERVO_H1, SpindexerState.SPIN_H1 );
+                break;
             case SPIN_P1 :
-                spinServoCurPos = SpindexerState.SPIN_P1;
-                spinServoSetPos = SPIN_SERVO_P1;
-                spinServo.setPosition(spinServoSetPos);
+                // Right
+                setSpindexPosition(SPINDEXER_RIGHT);
+                initSpindexerMovement( SPIN_SERVO_P1, SpindexerState.SPIN_P1 );
+                break;
+            case SPIN_H2 :
+                initSpindexerMovement( SPIN_SERVO_H2, SpindexerState.SPIN_H2 );
                 break;
             case SPIN_P2 :
-                spinServoCurPos = SpindexerState.SPIN_P2;
-                spinServoSetPos = SPIN_SERVO_P2;
-                spinServo.setPosition(spinServoSetPos);
+                // Center
+                setSpindexPosition(SPINDEXER_CENTER);
+                initSpindexerMovement( SPIN_SERVO_P2, SpindexerState.SPIN_P2 );
+                break;
+            case SPIN_H3 :
+                initSpindexerMovement( SPIN_SERVO_H3, SpindexerState.SPIN_H3 );
                 break;
             case SPIN_P3 :
-                spinServoCurPos = SpindexerState.SPIN_P3;
-                spinServoSetPos = SPIN_SERVO_P3;
-                spinServo.setPosition(spinServoSetPos);
+                // Left
+                setSpindexPosition(SPINDEXER_LEFT);
+                initSpindexerMovement( SPIN_SERVO_P3, SpindexerState.SPIN_P3 );
+                break;
+            case SPIN_H4 :
+                initSpindexerMovement( SPIN_SERVO_H4, SpindexerState.SPIN_H4 );
                 break;
             case SPIN_INCREMENT :
                 if( spinServoCurPos == SpindexerState.SPIN_P1 ) {
-                    spinServoCurPos = SpindexerState.SPIN_P2;
-                    spinServoSetPos = SPIN_SERVO_P2;
-                    spinServo.setPosition(spinServoSetPos);
+                    // Center
+                    setSpindexPosition(SPINDEXER_CENTER);
+                    initSpindexerMovement( SPIN_SERVO_P2, SpindexerState.SPIN_P2 );
                 }
                 else if( spinServoCurPos == SpindexerState.SPIN_P2 ) {
-                    spinServoCurPos = SpindexerState.SPIN_P3;
-                    spinServoSetPos = SPIN_SERVO_P3;
-                    spinServo.setPosition(spinServoSetPos);
+                    // Left
+                    setSpindexPosition(SPINDEXER_LEFT);
+                    initSpindexerMovement( SPIN_SERVO_P3, SpindexerState.SPIN_P3 );
                 } // else no room to increment further!
                 break;
             case SPIN_DECREMENT :
                 if( spinServoCurPos == SpindexerState.SPIN_P3 ) {
-                    spinServoCurPos = SpindexerState.SPIN_P2;
-                    spinServoSetPos = SPIN_SERVO_P2;
-                    spinServo.setPosition(spinServoSetPos);
+                    // Center
+                    setSpindexPosition(SPINDEXER_CENTER);
+                    initSpindexerMovement( SPIN_SERVO_P2, SpindexerState.SPIN_P2 );
                 }
                 else if( spinServoCurPos == SpindexerState.SPIN_P2 ) {
-                    spinServoCurPos = SpindexerState.SPIN_P1;
-                    spinServoSetPos = SPIN_SERVO_P1;
-                    spinServo.setPosition(spinServoSetPos);
-                } // else no room to increment further!
+                    // Right
+                    setSpindexPosition(SPINDEXER_RIGHT);
+                    initSpindexerMovement( SPIN_SERVO_P1, SpindexerState.SPIN_P1 );
+                } // else no room to decrement further!
                 break;
             default:
                 break;
         } // switch()
 
-        // reset our flag and start a timer
-        spinServoInPos = false;
-        spinServoTimer.reset();
     } // spinServoSetPosition
 
     /*--------------------------------------------------------------------------------------------*/
-    public void spinServoSetPositionCR( SpindexerState position )
+    public SpindexerState whichSpindexerHalfPosition( SpindexerState direction )
     {
-        switch( position ) {
-            case SPIN_P1 :
-                currentSpindexerTarget = SpindexerTargetPosition.P1;
-                break;
-            case SPIN_P2 :
-                currentSpindexerTarget = SpindexerTargetPosition.P2;
-                break;
-            case SPIN_P3 :
-                currentSpindexerTarget = SpindexerTargetPosition.P3;
-                break;
+        SpindexerState nextPos = spinServoCurPos;  // Default to CURRENT state
+        // Does operating want to go half-RIGHT or half-LEFT
+        switch( direction ) {
             case SPIN_INCREMENT :
-                cycleSpindexerTarget(+1);
+                switch( spinServoCurPos ) {
+                    case SPIN_P1 : nextPos = SpindexerState.SPIN_H2;  break;
+                    case SPIN_P2 : nextPos = SpindexerState.SPIN_H3;  break;
+                    case SPIN_P3 : nextPos = SpindexerState.SPIN_H4;  break;
+                    default : break;  // only valid for the full positions
+                } // switch()
                 break;
             case SPIN_DECREMENT :
-                cycleSpindexerTarget(-1);
+                switch( spinServoCurPos ) {
+                    case SPIN_P1 : nextPos = SpindexerState.SPIN_H1;  break;
+                    case SPIN_P2 : nextPos = SpindexerState.SPIN_H2;  break;
+                    case SPIN_P3 : nextPos = SpindexerState.SPIN_H3;  break;
+                    default : break;  // only valid for the full positions
+                } // switch()
                 break;
             default:
                 break;
         } // switch()
-    } // spinServoSetPositionCR
+        return nextPos;        
+    } // whichSpindexerHalfPosition
+
+    /*--------------------------------------------------------------------------------------------*/
+    public void initSpindexerMovement( double servoTargetValue, SpindexerState spindexerTargetState )
+    {
+        // Store the target position (enumerated state); only valid once InPos is achieved!
+        spinServoCurPos = spindexerTargetState;
+
+        // Store the target position (servo position value)
+        // NOTE: we can monitor for this value with our analog position feedback
+        spinServoSetPos  = servoTargetValue;
+
+        // Establish timeout based on a 1-pos (0.380) or 2-pos (0.750) movement
+        spinServoDelta   = Math.abs( spinServoSetPos - spinServoGetPos );
+        spinServoTimeout = (spinServoDelta < 0.500)? 375:750; // msec
+        
+        // Initiate servo movement toward that target setting
+        spinServo.setPosition( spinServoSetPos );
+
+        // Start a timer and reset our status flags
+        spinServoTimer.reset();
+        spinServoInPos = false;
+        spinServoAbort = false;
+        
+    } // initSpindexerMovement
+
+    /*--------------------------------------------------------------------------------------------*/
+    // NOTE: Measured timing data for spindexer movements using AxonMax+ MK2 servo
+    //                     +-------+-------+-------+-------+-------+-------+
+    //   [times in msec]   | P1-P2 | P2-P1 | P2-P3 | P3-P2 | P1-P3 | P3-P1 |
+    //                     +-------+-------+-------+-------+-------+-------+
+    //   ROBOT1: (0 balls) |  000  |  000  |  000  |  000  |  000  |  000  |
+    //           (3 balls) |  000  |  000  |  000  |  000  |  000  |  000  |
+    //   ROBOT2: (0 balls) |  000  |  000  |  000  |  000  |  000  |  000  |
+    //           (3 balls) |  000  |  000  |  000  |  000  |  000  |  000  |
+    //                     +-------+-------+-------+-------+-------+-------+
+    /*--------------------------------------------------------------------------------------------*/
+
+    /*--------------------------------------------------------------------------------------------*/
+    public void processSpindexerMovement()
+    {
+        // Are we already in position?
+        if( spinServoInPos == true ) {
+           return;
+        }
+        
+        // Has the spindexer moved within tolerance of the commanded position?
+        // (spinServoGetPos is updated during every bulk read)
+        double spindexerError = Math.abs( spinServoSetPos - spinServoGetPos );
+        if( spindexerError < 0.030 ) {
+            spinServoTime = spinServoTimer.milliseconds();
+            spinServoInPos = true;
+        }
+
+        // Have we timed-out for this movement?
+        else if( spinServoTimer.milliseconds() > spinServoTimeout ) {
+           // Is the timeout because the servo stopped outside our expected tolerance
+           // (but close enough to still be usable)?           
+           if( spindexerError < 0.045 ) {  // TODO: find true tolerance required
+              spinServoTime = spinServoTimer.milliseconds();
+              spinServoInPos = true;
+           } else {
+               // TODO: handle cases where spindexer is pinned/jammed on ball
+           }
+        } // timeout
+        
+    } // processSpindexerMovement
+
+    /*--------------------------------------------------------------------------------------------*/
+    public void abortSpindexerMovement()
+    {
+        // Is an automated movement currently underway that we need to abort?
+        if( spinServoInPos == false ) {
+          // We monitor current servo position every bulk read.  Use that
+          // servo position to abort any in-process movement by re-commanding
+          // to the current position.
+          spinServo.setPosition( spinServoGetPos );
+          spinServoAbort = true;
+        }
+        
+        // TODO: decide how to safely/properly use this...
+        
+    } // abortSpindexerMovement
 
     /*--------------------------------------------------------------------------------------------*/
     public void startInjectionStateMachine()
@@ -1077,12 +1245,15 @@ public class HardwareSwyftBot
             servoTimeoutU = (liftServoTimer.milliseconds() > 750);
             // Has the injector servo reached the desired position? (or timed-out?)
             if( servoFullyInjected || servoTimeoutU ) {
-              liftServoBusyU = false;  // the UP phase is complete
-              // Begin the DOWN/reset phase
-              liftServo.setPosition( LIFT_SERVO_RESET );
-              liftServoTimer.reset();
-              liftServoBusyD = true;
-              }
+                liftServoBusyU = false;  // the UP phase is complete
+                // Begin the DOWN/reset phase
+                liftServo.setPosition( LIFT_SERVO_RESET );
+                liftServoTimer.reset();
+                liftServoBusyD = true;
+                // Empty the spinventory
+                int centerIndex = Math.floorMod(1 + spindex, 3);
+                spinventory.set(centerIndex, Ball.None);
+            }
         } // UP
         
         // Process the RESETTING case (AxonMax+ no-load 60deg rotation = 115 msec
@@ -1110,7 +1281,135 @@ public class HardwareSwyftBot
        liftServoTimer.reset();
        liftServoBusyD = true;        
     } // abortInjectionStateMachine
-        
+
+    public void setSpindexPosition(int spindexSetting)
+    {
+        spindex = spindexSetting;
+        spindexerRight = Math.floorMod(spindex, 3);
+        spindexerCenter = Math.floorMod(1 + spindex, 3);
+        spindexerLeft = Math.floorMod(2 + spindex, 3);
+    }
+    public void setStartingSpinventory(Ball left, Ball center, Ball right)
+    {
+        setRightBall(right);
+        setCenterBall(center);
+        setLeftBall(left);
+    }
+    public Ball getRightBall()
+    {
+        return spinventory.get(spindexerRight);
+    }
+    public void setRightBall(Ball rightBall)
+    {
+        spinventory.set(spindexerRight, rightBall);
+    }
+    public Ball getCenterBall()
+    {
+        return spinventory.get(spindexerCenter);
+    }
+    public void setCenterBall(Ball centerBall)
+    {
+        spinventory.set(spindexerCenter, centerBall);
+    }
+    public Ball getLeftBall()
+    {
+        return spinventory.get(spindexerLeft);
+    }
+    public void setLeftBall(Ball leftBall)
+    {
+        spinventory.set(spindexerLeft, leftBall);
+    }
+    public Ball getBallColor(NormalizedColorSensor colorSensor)
+    {
+        Ball detectedBall = Ball.None;
+        NormalizedRGBA ballColors;
+        final float[] hsvValues = new float[3];
+        ballColors = colorSensor.getNormalizedColors();
+        Color.colorToHSV(ballColors.toColor(), hsvValues);
+        if(hsvValues[0] > 180.0)
+        {
+            detectedBall = Ball.Purple;
+            ballColorDetectingReads = 0;
+        }
+        else if (hsvValues[0] > 110.0)
+        {
+            detectedBall = Ball.Green;
+            ballColorDetectingReads = 0;
+        }
+        else
+        {
+            ballColorDetectingReads++;
+            if(ballColorDetectingReads > MAX_BALL_COLOR_READS)
+            {
+                detectedBall = Ball.Purple;
+                ballColorDetectingReads = 0;
+            }
+        }
+        return detectedBall;
+    }
+
+    public void processColorDetection ()
+    {
+        if(!isRobot1) return;
+
+        // First check if there are undetected balls present
+        if((leftBallIsPresent) && (!leftBallWasPresent) && (getLeftBall() == Ball.None))
+        {
+            leftBallDetectingColor = true;
+            ballColorDetectingReads = 0;
+        }
+        if((rightBallIsPresent) && (!rightBallWasPresent) && (getRightBall() == Ball.None))
+        {
+            rightBallDetectingColor = true;
+            ballColorDetectingReads = 0;
+        }
+
+        // If we are checking for a color
+        if((leftBallDetectingColor) || (rightBallDetectingColor))
+        {
+            // Left side detection cycle
+            if((ballColorDetectingReads % 2) == 0)
+            {
+                if(leftBallDetectingColor)
+                {
+                    setLeftBall(getBallColor(leftBallColorSensor));
+                    if(getLeftBall() != Ball.None)
+                    {
+                        leftBallDetectingColor = false;
+                    }
+                }
+                else // it is left's turn, but not in need.  If we're in here
+                {    // then right must have a need.  Use this cycle to scan it.
+                    setRightBall(getBallColor(rightBallColorSensor));
+                    if(getRightBall() != Ball.None)
+                    {
+                        rightBallDetectingColor = false;
+                    }
+                }
+            }
+            // Right side detection cycle
+            else
+            {
+                if(rightBallDetectingColor)
+                {
+                    setRightBall(getBallColor(rightBallColorSensor));
+                    if(getRightBall() != Ball.None)
+                    {
+                        rightBallDetectingColor = false;
+                    }
+                }
+                else // it is rights's turn, but not in need.  If we're in here
+                {    // then left must have a need.  Use this cycle to scan it.
+                    setLeftBall(getBallColor(leftBallColorSensor));
+                    if(getLeftBall() != Ball.None)
+                    {
+                        leftBallDetectingColor = false;
+                    }
+                }
+            }
+        }
+    } // processColorDetection
+
     /*--------------------------------------------------------------------------------------------*/
 
     /***
